@@ -54,7 +54,7 @@ func DefaultConfig() AppConfig {
 
 	return AppConfig{
 		DefaultThreads: 32,
-		TimeoutSec:     15,
+		TimeoutSec:     60,
 		MaxRetries:     5,
 		Proxy:          "",
 		Insecure:       false,
@@ -128,7 +128,7 @@ func normalizeConfig(cfg *AppConfig) {
 		cfg.DefaultThreads = 256
 	}
 	if cfg.TimeoutSec <= 0 {
-		cfg.TimeoutSec = 15
+		cfg.TimeoutSec = 60
 	}
 	if cfg.MaxRetries < 0 {
 		cfg.MaxRetries = 0
@@ -144,7 +144,7 @@ func ValidateConfig(cfg *AppConfig) error {
 		return fmt.Errorf("默认线程数不能超过 256")
 	}
 	if cfg.TimeoutSec <= 0 {
-		cfg.TimeoutSec = 15
+		cfg.TimeoutSec = 60
 	}
 	if cfg.TimeoutSec > 600 {
 		return fmt.Errorf("超时时间不能超过 600 秒")

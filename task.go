@@ -198,7 +198,8 @@ func (t *Task) reset() {
 }
 
 func (t *Task) subscribe() (chan ProgressEvent, func()) {
-	ch := make(chan ProgressEvent, 8)
+	// 缓冲区给大一些，避免客户端短暂卡顿时丢弃进度事件。
+	ch := make(chan ProgressEvent, 64)
 
 	t.mu.Lock()
 	t.subscribers[ch] = struct{}{}
