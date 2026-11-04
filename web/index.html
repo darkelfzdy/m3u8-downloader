@@ -1,0 +1,125 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="dark">
+  <title>M3U8 Downloader</title>
+  <link rel="stylesheet" href="/style.css">
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">
+      <span class="logo">▶</span>
+      <span>M3U8 Downloader</span>
+    </div>
+    <div class="status">
+      <span id="health-dot" class="dot"></span>
+      <span id="health-text">连接中…</span>
+      <span class="divider">|</span>
+      <span id="version">版本 -</span>
+    </div>
+  </header>
+
+  <main>
+    <section class="card">
+      <h2>新建任务</h2>
+      <p class="hint">直接粘贴命令行参数，或粘贴纯 M3U8 地址。参数与 CLI 完全一致。</p>
+      <textarea id="cmdline" rows="3" spellcheck="false"
+        placeholder='-u "https://example.com/video.m3u8" -o myvideo -n 64 -s'></textarea>
+      <div class="row">
+        <button id="btn-create" class="primary">开始下载</button>
+        <button id="btn-probe">解析预览</button>
+        <span id="probe-result" class="muted"></span>
+      </div>
+      <div id="create-error" class="error hidden"></div>
+      <div id="recent-wrap" class="recent-wrap hidden">
+        <div class="recent-title">最近提交</div>
+        <div id="recent" class="recent"></div>
+      </div>
+    </section>
+
+    <section class="card">
+      <div class="row between">
+        <h2>任务列表</h2>
+        <button id="btn-refresh" class="ghost">刷新</button>
+      </div>
+      <div id="tasks" class="tasks">
+        <div class="empty">暂无任务</div>
+      </div>
+    </section>
+
+    <section class="card">
+      <div class="row between">
+        <h2>文件列表</h2>
+        <button id="btn-files-refresh" class="ghost">刷新</button>
+      </div>
+      <div id="files" class="files">
+        <div class="empty">暂无文件</div>
+      </div>
+    </section>
+  </main>
+
+  <button id="btn-settings" class="fab" title="设置">⚙</button>
+
+  <div id="mask" class="mask hidden"></div>
+
+  <aside id="settings" class="drawer hidden">
+    <div class="drawer-head">
+      <h2>设置</h2>
+      <button id="btn-settings-close" class="ghost">✕</button>
+    </div>
+
+    <div class="drawer-body">
+      <label class="field">
+        <span>访问令牌 (WEB_TOKEN)</span>
+        <input id="cfg-token" type="password" autocomplete="off" placeholder="服务器未启用则留空">
+        <small>仅保存在本机浏览器，用于访问受保护的 API。</small>
+      </label>
+
+      <label class="field">
+        <span>默认线程数</span>
+        <input id="cfg-threads" type="number" min="1" max="256">
+      </label>
+
+      <label class="field">
+        <span>超时时间（秒）</span>
+        <input id="cfg-timeout" type="number" min="1" max="600">
+      </label>
+
+      <label class="field">
+        <span>最大重试次数</span>
+        <input id="cfg-retries" type="number" min="0" max="100">
+      </label>
+
+      <label class="field">
+        <span>默认代理</span>
+        <input id="cfg-proxy" type="text" placeholder="http://127.0.0.1:7890">
+      </label>
+
+      <label class="check">
+        <input id="cfg-insecure" type="checkbox">
+        <span>跳过 HTTPS 证书验证</span>
+      </label>
+
+      <label class="field">
+        <span>UA 池（每行一个）</span>
+        <textarea id="cfg-uas" rows="4" spellcheck="false"></textarea>
+      </label>
+
+      <label class="field">
+        <span>高级请求头（JSON 数组）</span>
+        <textarea id="cfg-headers" rows="7" spellcheck="false"></textarea>
+      </label>
+
+      <div class="row">
+        <button id="btn-save-config" class="primary">保存配置</button>
+        <span id="config-msg" class="muted"></span>
+      </div>
+      <p class="hint">Web 模式下成品统一保存到容器的 DOWNLOAD_DIR，配置文件中的默认目录不生效。</p>
+    </div>
+  </aside>
+
+  <script src="/app.js"></script>
+</body>
+</html>

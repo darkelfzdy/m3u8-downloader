@@ -1,0 +1,14 @@
+services:
+  m3u8-downloader:
+    image: darkelfzdy/m3u8-downloader:latest
+    container_name: m3u8-downloader
+    ports:
+      - "8080:8080"
+    volumes:
+      - /vol1/1000/Downloads:/downloads
+      - ./config:/config
+    environment:
+      - TZ=Asia/Shanghai
+      - PUID=1000
+      - PGID=1000
+    restart: unless-stopped

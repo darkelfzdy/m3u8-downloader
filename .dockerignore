@@ -1,0 +1,9 @@
+.git
+.github
+docs
+*.md
+*.zip
+m3u8-sniffer.user.js
+config.json
+downloads
+config

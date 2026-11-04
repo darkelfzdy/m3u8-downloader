@@ -1,9 +1,9 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"io"
-	"log"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -18,86 +18,93 @@ import (
 	"github.com/bogdanfinn/tls-client/profiles"
 )
 
-// TsInfo 定义单个 TS 视频切片的元数据结构
+// TsInfo 定义单个 TS 视频切片的元数据结构。
 type TsInfo struct {
 	Name string
 	URL  string
 }
 
-var (
-	// httpClient 是全局复用的底层 TLS 客户端，具备浏览器指纹特征，支持 HTTP/2 多路复用
-	httpClient      tls_client.HttpClient 
-	// headerMap 存储全局的基础请求头（如 User-Agent、Sec-Ch-Ua 等）
-	headerMap       = make(map[string]string)
-	// downloadedBytes 原子计数器，用于实时计算下载速度和总下载量
-	downloadedBytes int64 
-)
+// DownloadProgress 是一次进度快照。
+type DownloadProgress struct {
+	Total     int
+	Completed int32
+	Bytes     int64
+	Speed     float64
+}
 
-// InitNetwork 初始化底层的带指纹的网络客户端
-func InitNetwork() {
-	// 配置 tls_client 的核心选项
+// Downloader 持有单个任务独立的 HTTP 客户端与请求头，避免全局状态互相污染。
+type Downloader struct {
+	client  tls_client.HttpClient
+	headers map[string]string
+	opts    DownloadOptions
+}
+
+// NewDownloader 根据任务参数初始化带浏览器指纹的 HTTP 客户端与请求头。
+func NewDownloader(opts DownloadOptions, cfg AppConfig) (*Downloader, error) {
+	timeout := cfg.TimeoutSec
+	if timeout <= 0 {
+		timeout = 15
+	}
+
 	options := []tls_client.HttpClientOption{
-		tls_client.WithTimeoutSeconds(Config.TimeoutSec),
+		tls_client.WithTimeoutSeconds(timeout),
 		// 核心防风控点：强制指定 TLS 握手及 HTTP/2 帧特征为真实的 Chrome 146 浏览器
 		tls_client.WithClientProfile(profiles.Chrome_146),
 	}
 
-	// 如果开启了跳过证书验证
-	if Flags.Insecure {
+	if opts.Insecure {
 		options = append(options, tls_client.WithInsecureSkipVerify())
 	}
 
-	// 注入代理配置（优先使用命令行指定的 -proxy，其次读取环境变量）
-	if Flags.Proxy != "" {
-		options = append(options, tls_client.WithProxyUrl(Flags.Proxy))
+	// 注入代理配置（优先使用任务指定的 -proxy，其次读取环境变量）
+	if opts.Proxy != "" {
+		options = append(options, tls_client.WithProxyUrl(opts.Proxy))
 	} else if sysProxy := os.Getenv("HTTP_PROXY"); sysProxy != "" {
 		options = append(options, tls_client.WithProxyUrl(sysProxy))
 	}
 
-	// 实例化带有防检测指纹的 HttpClient
 	client, err := tls_client.NewHttpClient(tls_client.NewNoopLogger(), options...)
 	if err != nil {
-		log.Fatalf("❌ 初始化底层网络引擎失败: %v", err)
+		return nil, fmt.Errorf("初始化底层网络引擎失败: %w", err)
 	}
-	httpClient = client
 
-	// 获取基础的浏览器隐身特征头（包含 User-Agent、Sec-Ch-Ua、Sec-Fetch 等）
-	headerMap = GetBaseHeaders()
+	headers := GetBaseHeaders(opts, cfg)
 
-	// 动态追加命令行传入的 Cookie
-	if Flags.Cookie != "" {
-		headerMap["Cookie"] = Flags.Cookie
+	if opts.Cookie != "" {
+		headers["Cookie"] = opts.Cookie
 	}
-	// 动态追加命令行传入的自定义 Header (-H)
-	for _, h := range Flags.Headers {
+	for _, h := range opts.Headers {
 		parts := strings.SplitN(h, ":", 2)
 		if len(parts) == 2 {
-			headerMap[strings.TrimSpace(parts[0])] = strings.TrimSpace(parts[1])
+			headers[strings.TrimSpace(parts[0])] = strings.TrimSpace(parts[1])
 		}
 	}
+
+	return &Downloader{client: client, headers: headers, opts: opts}, nil
 }
 
-// FetchContent 发起带有完整浏览器特征与顺序控制的 HTTP 请求
-func FetchContent(reqURL string) ([]byte, error) {
-	// 使用 fhttp 创建请求对象，而非标准库 net/http
-	req, err := http.NewRequest(http.MethodGet, reqURL, nil)
+// Headers 返回当前生效的请求头（只读用途）。
+func (d *Downloader) Headers() map[string]string {
+	return d.headers
+}
+
+// Fetch 发起带有完整浏览器特征与顺序控制的 HTTP 请求。
+func (d *Downloader) Fetch(ctx context.Context, reqURL string) ([]byte, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, reqURL, nil)
 	if err != nil {
 		return nil, err
 	}
-	
-	// 依次填充请求头并收集 Key 列表，用于后续的严格排序
+
 	var orderKeys []string
-	for k, v := range headerMap {
+	for k, v := range d.headers {
 		req.Header.Set(k, v)
 		orderKeys = append(orderKeys, k)
 	}
 
 	// 【核心防风控点】：显式指定 HTTP/2 头部字段在 HPACK 压缩时的发送顺序。
-	// 高级 WAF（如 Cloudflare）会校验 Header 的顺序是否与真实浏览器一致，乱序会直接触发 403。
 	req.Header[http.HeaderOrderKey] = orderKeys
 
-	// 通过具有 Chrome 146 指纹的客户端发送请求
-	resp, err := httpClient.Do(req)
+	resp, err := d.client.Do(req)
 	if err != nil {
 		return nil, err
 	}
@@ -109,19 +116,21 @@ func FetchContent(reqURL string) ([]byte, error) {
 	return io.ReadAll(resp.Body)
 }
 
-// ParseTsList 解析 M3U8 播放列表文本，提取出所有 TS 切片的下载直链
+// ParseTsList 解析 M3U8 播放列表文本，提取出所有 TS 切片的下载直链。
 func ParseTsList(baseURL *url.URL, body string) []TsInfo {
 	var tsList []TsInfo
 	lines := strings.Split(body, "\n")
 	index := 0
 	for _, line := range lines {
 		line = strings.TrimSpace(line)
-		// 过滤空行和 M3U8 标签行
 		if line == "" || strings.HasPrefix(line, "#") {
 			continue
 		}
 		index++
-		tsURL, _ := url.Parse(line)
+		tsURL, err := url.Parse(line)
+		if err != nil {
+			continue
+		}
 		fullURL := baseURL.ResolveReference(tsURL).String()
 		tsList = append(tsList, TsInfo{
 			Name: fmt.Sprintf("%05d.ts", index),
@@ -131,87 +140,198 @@ func ParseTsList(baseURL *url.URL, body string) []TsInfo {
 	return tsList
 }
 
-// GetM3u8Key 检查并获取加密视频的 AES Key 秘钥内容
-func GetM3u8Key(baseURL *url.URL, body string) string {
-	lines := strings.Split(body, "\n")
-	for _, line := range lines {
-		// 查找 #EXT-X-KEY 标签中的 URI 路径
-		if strings.Contains(line, "#EXT-X-KEY") && strings.Contains(line, "URI") {
-			start := strings.Index(line, `URI="`) + 5
-			end := strings.Index(line[start:], `"`)
-			if end == -1 {
-				continue
-			}
-			keyURLObj, _ := url.Parse(line[start : start+end])
-			fullKeyURL := baseURL.ResolveReference(keyURLObj).String()
-			// 请求下载秘钥二进制数据
-			keyBytes, _ := FetchContent(fullKeyURL)
-			return string(keyBytes)
+// findM3u8KeyURI 从 M3U8 中提取 AES-128 密钥地址。
+func findM3u8KeyURI(body string) string {
+	for _, line := range strings.Split(body, "\n") {
+		line = strings.TrimSpace(line)
+		if !strings.Contains(line, "#EXT-X-KEY") || !strings.Contains(line, "URI") {
+			continue
 		}
+		start := strings.Index(line, `URI="`)
+		if start < 0 {
+			continue
+		}
+		start += len(`URI="`)
+		end := strings.Index(line[start:], `"`)
+		if end < 0 {
+			continue
+		}
+		return line[start : start+end]
 	}
 	return ""
 }
 
-// StartDownloader 任务分发器：利用 Goroutine 池实现多线程并发下载
-func StartDownloader(tsList []TsInfo, savePath string, key string) {
-	tsLen := len(tsList)
-	jobs := make(chan TsInfo, tsLen)
+// HasM3u8Key 判断播放列表是否包含加密密钥声明。
+func HasM3u8Key(body string) bool {
+	return findM3u8KeyURI(body) != ""
+}
 
-	// 将所有切片任务压入 Channel 队列
-	for _, ts := range tsList {
-		jobs <- ts
+// GetM3u8Key 检查并获取加密视频的 AES Key 秘钥内容。
+func (d *Downloader) GetM3u8Key(ctx context.Context, baseURL *url.URL, body string) string {
+	uri := findM3u8KeyURI(body)
+	if uri == "" {
+		return ""
 	}
-	close(jobs)
+	keyURLObj, err := url.Parse(uri)
+	if err != nil {
+		return ""
+	}
+	fullKeyURL := baseURL.ResolveReference(keyURLObj).String()
+	keyBytes, err := d.Fetch(ctx, fullKeyURL)
+	if err != nil {
+		return ""
+	}
+	return string(keyBytes)
+}
 
+// DownloadAll 任务分发器：利用 Goroutine 池实现多线程并发下载。
+// onProgress 每秒至少回调一次，用于 CLI 打印或 Web SSE 推送。
+func (d *Downloader) DownloadAll(ctx context.Context, tsList []TsInfo, savePath string, key string, onProgress func(DownloadProgress)) error {
+	total := len(tsList)
+	if total == 0 {
+		return fmt.Errorf("未解析到视频碎片")
+	}
+
+	threads := d.opts.Threads
+	if threads <= 0 {
+		threads = 1
+	}
+	if threads > total {
+		threads = total
+	}
+
+	jobs := make(chan TsInfo)
 	var wg sync.WaitGroup
-	var completedCount int32
+	var completed int32
+	var bytes int64
 
-	// 根据命令行指定的并发数（-n）启动工作协程
-	for i := 0; i < Flags.Threads; i++ {
+	var firstErr error
+	var errOnce sync.Once
+
+	for i := 0; i < threads; i++ {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
 			for ts := range jobs {
-				downloadTsWithRetry(ts, savePath, key, Config.MaxRetries)
-				atomic.AddInt32(&completedCount, 1)
+				if ctx.Err() != nil {
+					return
+				}
+				n, err := d.downloadTs(ctx, ts, savePath, key)
+				if err != nil {
+					errOnce.Do(func() { firstErr = err })
+					continue
+				}
+				atomic.AddInt32(&completed, 1)
+				atomic.AddInt64(&bytes, n)
 			}
 		}()
 	}
 
-	// 启动后台速度和进度监控
-	go speedMonitor(tsLen, &completedCount)
+	go func() {
+		defer close(jobs)
+		for _, ts := range tsList {
+			select {
+			case jobs <- ts:
+			case <-ctx.Done():
+				return
+			}
+		}
+	}()
+
+	done := make(chan struct{})
+	go func() {
+		ticker := time.NewTicker(1 * time.Second)
+		defer ticker.Stop()
+		var lastBytes int64
+		report := func() {
+			if onProgress == nil {
+				return
+			}
+			cur := atomic.LoadInt64(&bytes)
+			speed := float64(cur-lastBytes) / 1024 / 1024
+			lastBytes = cur
+			onProgress(DownloadProgress{
+				Total:     total,
+				Completed: atomic.LoadInt32(&completed),
+				Bytes:     cur,
+				Speed:     speed,
+			})
+		}
+		for {
+			select {
+			case <-done:
+				report()
+				return
+			case <-ticker.C:
+				report()
+			}
+		}
+	}()
+
 	wg.Wait()
+	close(done)
+
+	if ctx.Err() != nil {
+		return ctx.Err()
+	}
+	if firstErr != nil {
+		return firstErr
+	}
+	if int(atomic.LoadInt32(&completed)) != total {
+		return fmt.Errorf("部分碎片下载失败")
+	}
+	return nil
 }
 
-// downloadTsWithRetry 负责单个 TS 切片的下载、断点续传检测、AES 解密及 TS 流对齐清洗
-func downloadTsWithRetry(ts TsInfo, savePath string, key string, retries int) {
+// downloadTs 负责单个 TS 切片的下载、断点续传检测、AES 解密及 TS 流对齐清洗。
+// 采用 .part 临时文件 + rename 的方式写入，避免异常退出留下被误判为完整的半截碎片。
+func (d *Downloader) downloadTs(ctx context.Context, ts TsInfo, savePath string, key string) (int64, error) {
 	filePath := filepath.Join(savePath, ts.Name)
-	
-	// 断点续传/本地缓存检查逻辑
+
 	if info, err := os.Stat(filePath); err == nil {
-		if Flags.Force {
-			os.Remove(filePath) // 强制覆盖
+		if d.opts.Force {
+			os.Remove(filePath)
 		} else if info.Size() > 0 {
-			return // 文件已存在且不为空，跳过下载
+			return info.Size(), nil
 		} else {
 			os.Remove(filePath)
 		}
 	}
 
-	// 失败重试循环
+	retries := d.opts.Retries
+	if retries <= 0 {
+		retries = 1
+	}
+
+	var lastErr error
 	for i := 0; i < retries; i++ {
-		data, err := FetchContent(ts.URL)
+		if ctx.Err() != nil {
+			return 0, ctx.Err()
+		}
+
+		data, err := d.Fetch(ctx, ts.URL)
 		if err != nil || len(data) == 0 {
-			time.Sleep(1 * time.Second) // 失败后等待 1 秒再重试
+			if err != nil {
+				lastErr = err
+			} else {
+				lastErr = fmt.Errorf("响应内容为空")
+			}
+			if sleepErr := sleepCtx(ctx, 1*time.Second); sleepErr != nil {
+				return 0, sleepErr
+			}
 			continue
 		}
 
-		// 如果该视频被 AES 加密，执行解密操作
 		if key != "" {
-			data, _ = AesDecrypt(data, []byte(key))
+			decrypted, decErr := AesDecrypt(data, []byte(key))
+			if decErr != nil {
+				lastErr = decErr
+				continue
+			}
+			data = decrypted
 		}
 
-		// TS 流清洗：寻找 TS 包同步字节 0x47 (十进制 71)，切掉前面的杂质垃圾数据，保证视频能正常播放
+		// TS 流清洗：寻找 TS 包同步字节 0x47，切掉前面的杂质垃圾数据。
 		for j := 0; j < len(data); j++ {
 			if data[j] == 71 {
 				data = data[j:]
@@ -219,10 +339,58 @@ func downloadTsWithRetry(ts TsInfo, savePath string, key string, retries int) {
 			}
 		}
 
-		// 写入本地磁盘文件
-		os.WriteFile(filePath, data, 0666)
-		// 累加已下载字节数
-		atomic.AddInt64(&downloadedBytes, int64(len(data)))
-		return
+		tmpPath := filePath + ".part"
+		if err := os.WriteFile(tmpPath, data, 0666); err != nil {
+			return 0, err
+		}
+		if err := os.Rename(tmpPath, filePath); err != nil {
+			os.Remove(tmpPath)
+			return 0, err
+		}
+		return int64(len(data)), nil
+	}
+
+	return 0, fmt.Errorf("碎片 %s 下载失败: %v", ts.Name, lastErr)
+}
+
+// MergeTs 将临时碎片按顺序流式合并为最终文件，内存占用恒定。
+func MergeTs(tsList []TsInfo, tempDir, finalPath string) error {
+	out, err := os.Create(finalPath)
+	if err != nil {
+		return err
+	}
+
+	buf := make([]byte, 32*1024)
+	for _, ts := range tsList {
+		f, err := os.Open(filepath.Join(tempDir, ts.Name))
+		if err != nil {
+			out.Close()
+			os.Remove(finalPath)
+			return fmt.Errorf("缺少碎片 %s: %w", ts.Name, err)
+		}
+		_, copyErr := io.CopyBuffer(out, f, buf)
+		f.Close()
+		if copyErr != nil {
+			out.Close()
+			os.Remove(finalPath)
+			return copyErr
+		}
+	}
+
+	if err := out.Sync(); err != nil {
+		out.Close()
+		return err
+	}
+	return out.Close()
+}
+
+func sleepCtx(ctx context.Context, d time.Duration) error {
+	t := time.NewTimer(d)
+	defer t.Stop()
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-t.C:
+		return nil
 	}
 }
