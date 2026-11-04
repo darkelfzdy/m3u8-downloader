@@ -135,7 +135,18 @@ func (t *Task) setStatus(s TaskStatus, errMsg string) {
 		now := time.Now()
 		t.FinishedAt = &now
 	}
+	id, name := t.ID, t.Name
 	t.mu.Unlock()
+
+	switch s {
+	case StatusCompleted:
+		log.Printf("任务完成: %s (%s)", name, id)
+	case StatusFailed:
+		log.Printf("任务失败: %s (%s): %s", name, id, errMsg)
+	case StatusCancelled:
+		log.Printf("任务已取消: %s (%s)", name, id)
+	}
+
 	t.broadcast()
 }
 
@@ -508,6 +519,7 @@ func (m *Manager) runTask(t *Task) {
 	defer close(stop)
 
 	view := t.snapshot()
+	log.Printf("开始下载: %s (%s) 并发 %d", view.Options.OutName, t.ID, view.Options.Threads)
 
 	d, err := NewDownloader(view.Options, m.Config())
 	if err != nil {

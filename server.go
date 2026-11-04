@@ -77,12 +77,28 @@ func (s *Server) auth(next http.Handler) http.Handler {
 	})
 }
 
+// isPollingPath 判断是否为前端定时轮询接口，这类请求量大且没有信息量。
+func isPollingPath(path string) bool {
+	switch path {
+	case "/api/tasks", "/api/files", "/api/info", "/api/config":
+		return true
+	}
+	return false
+}
+
 func logRequests(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if !strings.HasPrefix(r.URL.Path, "/api/") {
+			next.ServeHTTP(w, r)
+			return
+		}
+		// 跳过前端高频轮询，只保留任务操作、配置修改、SSE 连接等有意义的请求。
+		if r.Method == http.MethodGet && isPollingPath(r.URL.Path) {
+			next.ServeHTTP(w, r)
+			return
+		}
 		start := time.Now()
 		next.ServeHTTP(w, r)
-		if strings.HasPrefix(r.URL.Path, "/api/") {
-			log.Printf("%s %s %s", r.Method, r.URL.Path, time.Since(start).Truncate(time.Millisecond))
-		}
+		log.Printf("%s %s %s", r.Method, r.URL.Path, time.Since(start).Truncate(time.Millisecond))
 	})
 }

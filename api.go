@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"net/url"
 	"os"
@@ -373,6 +374,7 @@ func (s *Server) handleConfig(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		s.manager.SetConfig(cfg)
+		log.Printf("配置已更新: 线程 %d | 超时 %ds | 重试 %d", cfg.DefaultThreads, cfg.TimeoutSec, cfg.MaxRetries)
 		writeJSON(w, http.StatusOK, cfg)
 	default:
 		writeError(w, http.StatusMethodNotAllowed, "方法不允许")
