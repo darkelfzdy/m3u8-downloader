@@ -6,7 +6,7 @@
   <meta name="color-scheme" content="dark">
   <meta name="theme-color" content="#070a08">
   <title>M3U8 Downloader · Signal Console</title>
-  <link rel="stylesheet" href="/style.css?v=3">
+  <link rel="stylesheet" href="/style.css?v=4">
 </head>
 <body>
   <div class="grain" aria-hidden="true"></div>
@@ -48,7 +48,6 @@
   </header>
 
   <main class="layout">
-    <div class="main-col">
     <section class="card create">
       <header class="card-head">
         <span class="card-index">01</span>
@@ -91,44 +90,6 @@
       </div>
     </section>
 
-    <section class="card quickref">
-      <header class="card-head">
-        <span class="card-index">REF</span>
-        <div class="card-title">
-          <h2>快捷参数</h2>
-          <span class="card-code">CHEATSHEET</span>
-        </div>
-        <span class="card-tag">CLI</span>
-      </header>
-      <div class="arg-list">
-        <div class="arg-row">
-          <code>-u &lt;url&gt;</code>
-          <span>M3U8 地址，可直接粘贴纯链接</span>
-        </div>
-        <div class="arg-row">
-          <code>-o &lt;name&gt;</code>
-          <span>输出文件名，省略时按时间生成</span>
-        </div>
-        <div class="arg-row">
-          <code>-n &lt;num&gt;</code>
-          <span>并发线程数，默认 8</span>
-        </div>
-        <div class="arg-row">
-          <code>-r &lt;num&gt;</code>
-          <span>失败重试次数</span>
-        </div>
-        <div class="arg-row">
-          <code>-s</code>
-          <span>启用完整浏览器指纹伪装</span>
-        </div>
-        <div class="arg-row">
-          <code>-H "K: V"</code>
-          <span>追加自定义请求头</span>
-        </div>
-      </div>
-    </section>
-    </div>
-
     <aside class="rail">
       <section class="card telemetry">
         <header class="card-head">
@@ -165,22 +126,6 @@
         </div>
       </section>
 
-      <section class="card output">
-        <header class="card-head">
-          <span class="card-index">03</span>
-          <div class="card-title">
-            <h2>文件列表</h2>
-            <span class="card-code">OUTPUT</span>
-          </div>
-          <button id="btn-files-refresh" class="btn btn-mini" type="button">刷新</button>
-        </header>
-        <div id="files" class="files">
-          <div class="empty small">
-            <span class="empty-code">NO OUTPUT</span>
-            <span class="empty-text">暂无文件</span>
-          </div>
-        </div>
-      </section>
     </aside>
 
     <section class="card queue">
@@ -221,6 +166,43 @@
           <span class="empty-code">NO SIGNAL</span>
           <span class="empty-text">还没有任务，在上方输入地址开始</span>
           <span class="empty-glyph" aria-hidden="true">· · ·</span>
+        </div>
+      </div>
+    </section>
+
+    <section class="card quickref">
+      <header class="card-head">
+        <span class="card-index">REF</span>
+        <div class="card-title">
+          <h2>快捷参数</h2>
+          <span class="card-code">CHEATSHEET</span>
+        </div>
+        <span class="card-tag">CLI</span>
+      </header>
+      <div class="arg-list">
+        <div class="arg-row">
+          <code>-u &lt;url&gt;</code>
+          <span>M3U8 地址，可直接粘贴纯链接</span>
+        </div>
+        <div class="arg-row">
+          <code>-o &lt;name&gt;</code>
+          <span>输出文件名，省略时按时间生成</span>
+        </div>
+        <div class="arg-row">
+          <code>-n &lt;num&gt;</code>
+          <span>并发线程数，默认 8</span>
+        </div>
+        <div class="arg-row">
+          <code>-r &lt;num&gt;</code>
+          <span>失败重试次数</span>
+        </div>
+        <div class="arg-row">
+          <code>-s</code>
+          <span>启用完整浏览器指纹伪装</span>
+        </div>
+        <div class="arg-row">
+          <code>-H "K: V"</code>
+          <span>追加自定义请求头</span>
         </div>
       </div>
     </section>
@@ -303,6 +285,6 @@
 
   <div id="toasts" class="toasts" aria-live="polite" aria-atomic="false"></div>
 
-  <script src="/app.js?v=3"></script>
+  <script src="/app.js?v=4"></script>
 </body>
 </html>

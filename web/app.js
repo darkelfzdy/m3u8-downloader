@@ -538,7 +538,6 @@
           task.status === "cancelled"
         ) {
           closeSSE(id);
-          if (task.status === "completed") loadFiles();
         }
       } catch (e) {
         /* ignore */
@@ -695,7 +694,6 @@
         state.selected.delete(id);
         closeSSE(id);
         renderTasks();
-        if (deleteFile) loadFiles();
       } catch (e) {
         toast(e.message, "error");
       }
@@ -791,7 +789,6 @@
       }
 
       await loadTasks();
-      if (deleteFile && okIds.length) loadFiles();
 
       if (failed.length) {
         toast(
@@ -808,51 +805,6 @@
       }
     } catch (e) {
       toast(e.message, "error");
-    }
-  }
-
-  /* ---------------- 文件 ---------------- */
-
-  async function loadFiles() {
-    try {
-      const data = await api("/api/files");
-      const files = (data && data.files) || [];
-      const box = $("#files");
-
-      if (!files.length) {
-        box.innerHTML =
-          '<div class="empty small"><span class="empty-code">NO OUTPUT</span><span class="empty-text">暂无文件</span></div>';
-        return;
-      }
-
-      box.innerHTML = files
-        .map(function (f, i) {
-          return (
-            '<a class="file" href="' +
-            escapeHtml(withToken("/api/files/" + encodeURIComponent(f.name))) +
-            '" download title="' +
-            escapeHtml(f.name) +
-            '">' +
-            '<span class="file-idx">' +
-            pad(i + 1) +
-            "</span>" +
-            '<span class="file-body">' +
-            '<span class="file-name">' +
-            escapeHtml(f.name) +
-            "</span>" +
-            '<span class="file-meta">' +
-            formatSize(f.size) +
-            " · " +
-            formatTime(f.mod_time) +
-            "</span>" +
-            "</span>" +
-            '<span class="file-get" aria-hidden="true">↓</span>' +
-            "</a>"
-          );
-        })
-        .join("");
-    } catch (e) {
-      /* ignore */
     }
   }
 
@@ -963,7 +915,6 @@
     $("#btn-create").addEventListener("click", createTask);
     $("#btn-probe").addEventListener("click", probe);
     $("#btn-refresh").addEventListener("click", loadTasks);
-    $("#btn-files-refresh").addEventListener("click", loadFiles);
     $("#btn-settings").addEventListener("click", openSettings);
     $("#btn-settings-close").addEventListener("click", closeSettings);
     $("#mask").addEventListener("click", closeSettings);
@@ -1037,12 +988,10 @@
     loadVersion();
     loadConfig();
     loadTasks();
-    loadFiles();
 
     setInterval(tickClock, 1000);
     setInterval(checkHealth, 30000);
     setInterval(loadTasks, 5000);
-    setInterval(loadFiles, 15000);
   }
 
   if (document.readyState === "loading") {
