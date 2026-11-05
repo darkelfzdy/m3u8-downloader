@@ -4,287 +4,137 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="color-scheme" content="dark">
-  <meta name="theme-color" content="#070a08">
-  <title>M3U8 Downloader · Signal Console</title>
-  <link rel="stylesheet" href="/style.css?v=4">
+  <title>M3U8 Downloader</title>
+  <link rel="stylesheet" href="/style.css?v=2">
 </head>
 <body>
-  <div class="grain" aria-hidden="true"></div>
-
-  <header class="masthead">
-    <div class="masthead-top">
-      <div class="brand-block">
-        <div class="eyebrow">
-          <span class="pulse" aria-hidden="true"></span>
-          Signal Acquisition Console
-          <span class="sep">/</span>
-          流媒体下载控制台
-        </div>
-        <h1 class="wordmark">
-          <span class="wm-solid">M3U8</span><span class="wm-ghost">/DL</span>
-        </h1>
-        <p class="tagline">碎片抓取 · AES-128 解密 · 流式拼接 · 本地交付</p>
-      </div>
-
-      <div class="masthead-side">
-        <div class="link-state">
-          <span id="health-dot" class="dot"></span>
-          <span id="health-text">连接中…</span>
-        </div>
-        <div class="clock-wrap">
-          <span class="clock-label">Local Time</span>
-          <span id="clock" class="clock">--:--:--</span>
-          <span id="clock-date" class="clock-date">----.--.--</span>
-        </div>
-        <div class="side-foot">
-          <span id="version" class="version">版本 -</span>
-          <button id="btn-settings" class="btn config-btn" type="button">
-            设置<span>/ CONFIG</span>
-          </button>
-        </div>
-      </div>
+  <header class="topbar">
+    <div class="brand">
+      <span class="logo">▶</span>
+      <span>M3U8 Downloader</span>
     </div>
-    <div class="ruler" aria-hidden="true"></div>
+    <div class="status">
+      <span id="health-dot" class="dot"></span>
+      <span id="health-text">连接中…</span>
+      <span class="divider">|</span>
+      <span id="version">版本 -</span>
+    </div>
   </header>
 
-  <main class="layout">
-    <section class="card create">
-      <header class="card-head">
-        <span class="card-index">01</span>
-        <div class="card-title">
-          <h2>新建任务</h2>
-          <span class="card-code">NEW JOB</span>
-        </div>
-        <span class="card-tag">ARGV</span>
-      </header>
-
-      <p class="hint">
-        直接粘贴与 CLI 完全一致的参数串，或粘贴纯 M3U8 地址。支持用双引号包裹 Cookie 等含空格的值。
-      </p>
-
-      <div class="console">
-        <div class="console-bar">
-          <span class="console-title">$ downloader --input</span>
-          <span class="kbd">CTRL + ENTER</span>
-        </div>
-        <div class="console-field">
-          <span class="prompt" aria-hidden="true">›</span>
-          <textarea id="cmdline" rows="3" spellcheck="false"
-            placeholder='-u "https://example.com/video.m3u8" -o myvideo -n 64 -s'></textarea>
-        </div>
+  <main>
+    <section class="card">
+      <h2>新建任务</h2>
+      <p class="hint">直接粘贴命令行参数，或粘贴纯 M3U8 地址。参数与 CLI 完全一致。</p>
+      <textarea id="cmdline" rows="3" spellcheck="false"
+        placeholder='-u "https://example.com/video.m3u8" -o myvideo -n 64 -s'></textarea>
+      <div class="row">
+        <button id="btn-create" class="primary">开始下载</button>
+        <button id="btn-probe">解析预览</button>
+        <span id="probe-result" class="muted"></span>
       </div>
-
-      <div class="create-actions">
-        <button id="btn-create" class="btn primary" type="button">
-          开始下载<span class="btn-arrow" aria-hidden="true">→</span>
-        </button>
-        <button id="btn-probe" class="btn" type="button">解析预览</button>
-        <span id="probe-result" class="probe"></span>
-      </div>
-
-      <div id="create-error" class="error hidden" role="alert"></div>
-
+      <div id="create-error" class="error hidden"></div>
       <div id="recent-wrap" class="recent-wrap hidden">
-        <span class="recent-title">最近提交 / Recent</span>
+        <div class="recent-title">最近提交</div>
         <div id="recent" class="recent"></div>
       </div>
     </section>
 
-    <aside class="rail">
-      <section class="card telemetry">
-        <header class="card-head">
-          <span class="card-index">02</span>
-          <div class="card-title">
-            <h2>运行概览</h2>
-            <span class="card-code">TELEMETRY</span>
-          </div>
-        </header>
-
-        <div class="stat-grid">
-          <div class="stat">
-            <span id="stat-total" class="stat-value">00</span>
-            <span class="stat-label">全部任务</span>
-          </div>
-          <div class="stat is-active">
-            <span id="stat-active" class="stat-value">00</span>
-            <span class="stat-label">进行中</span>
-          </div>
-          <div class="stat is-done">
-            <span id="stat-done" class="stat-value">00</span>
-            <span class="stat-label">已完成</span>
-          </div>
-          <div class="stat is-failed">
-            <span id="stat-failed" class="stat-value">00</span>
-            <span class="stat-label">异常</span>
-          </div>
-        </div>
-
-        <div class="rail-lines">
-          <div><span>QUEUE DEPTH</span><span id="stat-queued">0</span></div>
-          <div><span>ACTIVE STREAMS</span><span id="stat-streams">0</span></div>
-          <div><span>OUTPUT MODE</span><span>MP4 / TS</span></div>
-        </div>
-      </section>
-
-    </aside>
-
-    <section class="card queue">
-      <header class="card-head">
-        <span class="card-index">04</span>
-        <div class="card-title">
-          <h2>任务列表</h2>
-          <span class="card-code">QUEUE</span>
-        </div>
-        <div class="queue-tools">
+    <section class="card">
+      <div class="row between">
+        <div class="row-title">
           <label class="check all-check">
             <input id="select-all" type="checkbox">
             <span>全选</span>
           </label>
-          <button id="btn-refresh" class="btn btn-mini" type="button">刷新</button>
+          <h2>任务列表</h2>
         </div>
-      </header>
-
-      <div id="task-filters" class="filters" role="tablist" aria-label="任务筛选">
-        <button class="filter active" data-filter="all" type="button">全部 <span class="f-count">0</span></button>
-        <button class="filter" data-filter="active" type="button">进行中 <span class="f-count">0</span></button>
-        <button class="filter" data-filter="done" type="button">已完成 <span class="f-count">0</span></button>
-        <button class="filter" data-filter="failed" type="button">异常 <span class="f-count">0</span></button>
+        <button id="btn-refresh" class="ghost">刷新</button>
       </div>
-
       <div id="batch-bar" class="batch-bar hidden">
-        <span id="batch-count" class="batch-count">已选 0 项</span>
+        <span id="batch-count" class="muted">已选 0 项</span>
         <div class="batch-actions">
-          <button id="btn-batch-cancel" class="btn btn-mini" data-batch="cancel" type="button">取消所选</button>
-          <button id="btn-batch-retry" class="btn btn-mini" data-batch="retry" type="button">重试所选</button>
-          <button id="btn-batch-delete" class="btn btn-mini danger" data-batch="delete" type="button">删除记录</button>
-          <button id="btn-batch-delete-file" class="btn btn-mini danger" data-batch="delete-file" type="button">删除记录和文件</button>
+          <button id="btn-batch-cancel" data-batch="cancel">取消所选</button>
+          <button id="btn-batch-retry" data-batch="retry">重试所选</button>
+          <button id="btn-batch-delete" data-batch="delete" class="danger">删除记录</button>
+          <button id="btn-batch-delete-file" data-batch="delete-file" class="danger">删除记录和文件</button>
         </div>
       </div>
-
       <div id="tasks" class="tasks">
-        <div class="empty">
-          <span class="empty-code">NO SIGNAL</span>
-          <span class="empty-text">还没有任务，在上方输入地址开始</span>
-          <span class="empty-glyph" aria-hidden="true">· · ·</span>
-        </div>
+        <div class="empty">暂无任务</div>
       </div>
     </section>
 
-    <section class="card quickref">
-      <header class="card-head">
-        <span class="card-index">REF</span>
-        <div class="card-title">
-          <h2>快捷参数</h2>
-          <span class="card-code">CHEATSHEET</span>
-        </div>
-        <span class="card-tag">CLI</span>
-      </header>
-      <div class="arg-list">
-        <div class="arg-row">
-          <code>-u &lt;url&gt;</code>
-          <span>M3U8 地址，可直接粘贴纯链接</span>
-        </div>
-        <div class="arg-row">
-          <code>-o &lt;name&gt;</code>
-          <span>输出文件名，省略时按时间生成</span>
-        </div>
-        <div class="arg-row">
-          <code>-n &lt;num&gt;</code>
-          <span>并发线程数，默认 8</span>
-        </div>
-        <div class="arg-row">
-          <code>-r &lt;num&gt;</code>
-          <span>失败重试次数</span>
-        </div>
-        <div class="arg-row">
-          <code>-s</code>
-          <span>启用完整浏览器指纹伪装</span>
-        </div>
-        <div class="arg-row">
-          <code>-H "K: V"</code>
-          <span>追加自定义请求头</span>
-        </div>
+    <section class="card">
+      <div class="row between">
+        <h2>文件列表</h2>
+        <button id="btn-files-refresh" class="ghost">刷新</button>
+      </div>
+      <div id="files" class="files">
+        <div class="empty">暂无文件</div>
       </div>
     </section>
   </main>
 
-  <footer class="page-foot">
-    <span>M3U8 Downloader <b>//</b> Self-hosted</span>
-    <span>Data stays local</span>
-  </footer>
+  <button id="btn-settings" class="fab" title="设置">⚙</button>
 
   <div id="mask" class="mask hidden"></div>
 
-  <aside id="settings" class="drawer hidden" aria-label="设置">
-    <header class="drawer-head">
-      <div>
-        <span class="drawer-kicker">SYSTEM / CONFIG</span>
-        <h2>设置</h2>
-      </div>
-      <button id="btn-settings-close" class="btn btn-close" type="button" aria-label="关闭">×</button>
-    </header>
+  <aside id="settings" class="drawer hidden">
+    <div class="drawer-head">
+      <h2>设置</h2>
+      <button id="btn-settings-close" class="ghost">✕</button>
+    </div>
 
     <div class="drawer-body">
-      <section class="drawer-section">
-        <h3 class="section-label">访问控制 <span>ACCESS</span></h3>
-        <label class="field">
-          <span>访问令牌 (WEB_TOKEN)</span>
-          <input id="cfg-token" type="password" autocomplete="off" placeholder="服务器未启用则留空">
-          <small>仅保存在本机浏览器，用于访问受保护的 API。</small>
-        </label>
-      </section>
+      <label class="field">
+        <span>访问令牌 (WEB_TOKEN)</span>
+        <input id="cfg-token" type="password" autocomplete="off" placeholder="服务器未启用则留空">
+        <small>仅保存在本机浏览器，用于访问受保护的 API。</small>
+      </label>
 
-      <section class="drawer-section">
-        <h3 class="section-label">传输参数 <span>TRANSFER</span></h3>
-        <div class="field-row">
-          <label class="field">
-            <span>默认线程数</span>
-            <input id="cfg-threads" type="number" min="1" max="256">
-          </label>
-          <label class="field">
-            <span>超时（秒）</span>
-            <input id="cfg-timeout" type="number" min="1" max="600">
-          </label>
-          <label class="field">
-            <span>最大重试</span>
-            <input id="cfg-retries" type="number" min="0" max="100">
-          </label>
-        </div>
+      <label class="field">
+        <span>默认线程数</span>
+        <input id="cfg-threads" type="number" min="1" max="256">
+      </label>
 
-        <label class="field">
-          <span>默认代理</span>
-          <input id="cfg-proxy" type="text" placeholder="http://127.0.0.1:7890">
-        </label>
+      <label class="field">
+        <span>超时时间（秒）</span>
+        <input id="cfg-timeout" type="number" min="1" max="600">
+      </label>
 
-        <label class="toggle">
-          <input id="cfg-insecure" type="checkbox">
-          <span>跳过 HTTPS 证书验证</span>
-        </label>
-      </section>
+      <label class="field">
+        <span>最大重试次数</span>
+        <input id="cfg-retries" type="number" min="0" max="100">
+      </label>
 
-      <section class="drawer-section">
-        <h3 class="section-label">请求身份 <span>IDENTITY</span></h3>
-        <label class="field">
-          <span>UA 池（每行一个）</span>
-          <textarea id="cfg-uas" rows="4" spellcheck="false"></textarea>
-        </label>
-        <label class="field">
-          <span>高级请求头（JSON 数组）</span>
-          <textarea id="cfg-headers" rows="7" spellcheck="false"></textarea>
-        </label>
-      </section>
+      <label class="field">
+        <span>默认代理</span>
+        <input id="cfg-proxy" type="text" placeholder="http://127.0.0.1:7890">
+      </label>
 
-      <div class="drawer-actions">
-        <button id="btn-save-config" class="btn primary" type="button">保存配置</button>
+      <label class="check">
+        <input id="cfg-insecure" type="checkbox">
+        <span>跳过 HTTPS 证书验证</span>
+      </label>
+
+      <label class="field">
+        <span>UA 池（每行一个）</span>
+        <textarea id="cfg-uas" rows="4" spellcheck="false"></textarea>
+      </label>
+
+      <label class="field">
+        <span>高级请求头（JSON 数组）</span>
+        <textarea id="cfg-headers" rows="7" spellcheck="false"></textarea>
+      </label>
+
+      <div class="row">
+        <button id="btn-save-config" class="primary">保存配置</button>
         <span id="config-msg" class="muted"></span>
       </div>
-
       <p class="hint">Web 模式下成品统一保存到容器的 DOWNLOAD_DIR，配置文件中的默认目录不生效。</p>
     </div>
   </aside>
 
-  <div id="toasts" class="toasts" aria-live="polite" aria-atomic="false"></div>
-
-  <script src="/app.js?v=4"></script>
+  <script src="/app.js?v=2"></script>
 </body>
 </html>

@@ -20,14 +20,7 @@
     selected: new Set(),
     token: "",
     config: null,
-    filter: "all",
-    rendered: new Set(),
   };
-
-  const isActive = (task) =>
-    task.status === "queued" ||
-    task.status === "running" ||
-    task.status === "merging";
 
   /* ---------------- 工具函数 ---------------- */
 
@@ -50,38 +43,6 @@
       i++;
     }
     return v.toFixed(v >= 100 || i === 0 ? 0 : 1) + " " + units[i];
-  }
-
-  function pad(value, width) {
-    return String(value).padStart(width || 2, "0");
-  }
-
-  function toast(msg, type) {
-    const box = $("#toasts");
-    if (!box) return;
-    const el = document.createElement("div");
-    el.className = "toast " + (type || "info");
-    el.textContent = msg;
-    box.appendChild(el);
-    requestAnimationFrame(function () {
-      el.classList.add("show");
-    });
-    setTimeout(function () {
-      el.classList.remove("show");
-      setTimeout(function () {
-        if (el.parentNode) el.parentNode.removeChild(el);
-      }, 220);
-    }, 3600);
-  }
-
-  function emptyState(code, text) {
-    return (
-      '<div class="empty"><span class="empty-code">' +
-      escapeHtml(code) +
-      '</span><span class="empty-text">' +
-      escapeHtml(text) +
-      '</span><span class="empty-glyph" aria-hidden="true">· · ·</span></div>'
-    );
   }
 
   function formatTime(value) {
@@ -154,19 +115,6 @@
 
   /* ---------------- 健康状态与版本 ---------------- */
 
-  function tickClock() {
-    const clock = $("#clock");
-    if (!clock) return;
-    const d = new Date();
-    clock.textContent =
-      pad(d.getHours()) + ":" + pad(d.getMinutes()) + ":" + pad(d.getSeconds());
-    const date = $("#clock-date");
-    if (date) {
-      date.textContent =
-        d.getFullYear() + "." + pad(d.getMonth() + 1) + "." + pad(d.getDate());
-    }
-  }
-
   async function checkHealth() {
     const dot = $("#health-dot");
     const text = $("#health-text");
@@ -225,9 +173,9 @@
           escapeHtml(item) +
           '" title="' +
           escapeHtml(item) +
-          '"><span class="recent-dot" aria-hidden="true">↺</span><span class="recent-cmd">' +
+          '">' +
           escapeHtml(item) +
-          "</span></button>"
+          "</button>"
       )
       .join("");
   }
@@ -240,109 +188,17 @@
     );
   }
 
-  function matchingFilter(task) {
-    switch (state.filter) {
-      case "active":
-        return isActive(task);
-      case "done":
-        return task.status === "completed";
-      case "failed":
-        return task.status === "failed" || task.status === "cancelled";
-      default:
-        return true;
-    }
-  }
-
-  function visibleTasks() {
-    return sortedTasks().filter(matchingFilter);
-  }
-
-  function updateStats(all) {
-    const active = all.filter(isActive).length;
-    const done = all.filter((t) => t.status === "completed").length;
-    const failed = all.filter(
-      (t) => t.status === "failed" || t.status === "cancelled"
-    ).length;
-    const queued = all.filter((t) => t.status === "queued").length;
-    const streams = all.filter(
-      (t) => t.status === "running" || t.status === "merging"
-    ).length;
-
-    const set = function (sel, value) {
-      const el = $(sel);
-      if (el) el.textContent = pad(value);
-    };
-    set("#stat-total", all.length);
-    set("#stat-active", active);
-    set("#stat-done", done);
-    set("#stat-failed", failed);
-
-    const queuedEl = $("#stat-queued");
-    if (queuedEl) queuedEl.textContent = String(queued);
-    const streamsEl = $("#stat-streams");
-    if (streamsEl) streamsEl.textContent = String(streams);
-  }
-
-  function updateFilterCounts(all) {
-    const counts = {
-      all: all.length,
-      active: all.filter(isActive).length,
-      done: all.filter((t) => t.status === "completed").length,
-      failed: all.filter(
-        (t) => t.status === "failed" || t.status === "cancelled"
-      ).length,
-    };
-
-    const filters = document.querySelectorAll("#task-filters [data-filter]");
-    Array.prototype.forEach.call(filters, function (btn) {
-      const key = btn.getAttribute("data-filter");
-      const counter = btn.querySelector(".f-count");
-      if (counter) counter.textContent = String(counts[key] || 0);
-      btn.classList.toggle("active", key === state.filter);
-    });
-  }
-
-  function setFilter(filter) {
-    if (state.filter === filter) return;
-    state.filter = filter;
-    state.selected.clear();
-    renderTasks();
-  }
-
   function renderTasks() {
     const container = $("#tasks");
-    const all = sortedTasks();
-    const list = all.filter(matchingFilter);
-
-    updateStats(all);
-    updateFilterCounts(all);
-
-    if (!all.length) {
-      container.innerHTML = emptyState(
-        "NO SIGNAL",
-        "还没有任务，在上方输入地址开始"
-      );
-      state.rendered.clear();
-      syncSelection([]);
-      return;
-    }
+    const list = sortedTasks();
 
     if (!list.length) {
-      container.innerHTML = emptyState("NO MATCH", "当前筛选下没有任务");
-      syncSelection([]);
+      container.innerHTML = '<div class="empty">暂无任务</div>';
+      syncSelection(list);
       return;
     }
 
-    const order = new Map();
-    all.forEach(function (task, i) {
-      order.set(task.id, i);
-    });
-
-    container.innerHTML = list
-      .map(function (task) {
-        return renderTask(task, order.get(task.id));
-      })
-      .join("");
+    container.innerHTML = list.map(renderTask).join("");
     syncSelection(list);
   }
 
@@ -398,11 +254,10 @@
     btn.title = count === 0 ? hint : "";
   }
 
-  function renderTask(task, index) {
+  function renderTask(task) {
     const total = task.total || 0;
     const completed = task.completed || 0;
-    let percent = total > 0 ? Math.min(100, (completed / total) * 100) : 0;
-    if (percent <= 0 && task.status === "completed") percent = 100;
+    const percent = total > 0 ? Math.min(100, (completed / total) * 100) : 0;
 
     const isRunning =
       task.status === "running" || task.status === "merging";
@@ -410,65 +265,46 @@
       task.status === "failed" || task.status === "cancelled";
     const selected = state.selected.has(task.id);
 
-    const fresh = !state.rendered.has(task.id);
-    state.rendered.add(task.id);
-
     const actions = [];
-    if (isActive(task)) {
+    if (isRunning || task.status === "queued") {
       actions.push(
-        '<button class="btn btn-mini danger" data-action="cancel" data-id="' +
+        '<button class="danger" data-action="cancel" data-id="' +
           escapeHtml(task.id) +
           '">取消</button>'
       );
     }
     if (canRetry) {
       actions.push(
-        '<button class="btn btn-mini" data-action="retry" data-id="' +
+        '<button data-action="retry" data-id="' +
           escapeHtml(task.id) +
           '">重试</button>'
       );
     }
     if (!isRunning) {
       actions.push(
-        '<button class="btn btn-mini" data-action="delete" data-id="' +
+        '<button data-action="delete" data-id="' +
           escapeHtml(task.id) +
           '">删除</button>'
       );
     }
 
     const speed =
-      task.status === "running"
-        ? (task.speed || 0).toFixed(2) + " MB/s"
-        : "—";
-
-    const percentText =
-      percent >= 100 ? "100" : percent.toFixed(percent >= 10 ? 1 : 2);
+      task.status === "running" ? (task.speed || 0).toFixed(2) + " MB/s" : "-";
 
     return (
-      '<article class="task ' +
+      '<div class="task ' +
       escapeHtml(task.status) +
       (selected ? " selected" : "") +
-      (fresh ? " is-new" : "") +
-      '"' +
-      (fresh
-        ? ' style="animation-delay:' + Math.min(index * 40, 240) + 'ms"'
-        : "") +
-      ">" +
-      '<label class="task-check">' +
+      '">' +
+      '<div class="task-head">' +
+      '<label class="task-select">' +
       '<input type="checkbox" data-select="' +
       escapeHtml(task.id) +
       '"' +
       (selected ? " checked" : "") +
       ' aria-label="选择任务">' +
       "</label>" +
-      '<div class="task-main">' +
-      '<div class="task-line">' +
-      '<span class="task-idx">' +
-      pad(index + 1, 3) +
-      "</span>" +
-      '<span class="task-name" title="' +
-      escapeHtml((task.name || task.id) + ".mp4") +
-      '">' +
+      '<span class="task-name">' +
       escapeHtml(task.name || task.id) +
       ".mp4</span>" +
       '<span class="badge ' +
@@ -477,38 +313,34 @@
       escapeHtml(statusLabel(task)) +
       "</span>" +
       "</div>" +
-      '<div class="bar" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="' +
-      percent.toFixed(0) +
-      '"><div class="bar-fill" style="width:' +
+      '<div class="bar"><div style="width:' +
       percent.toFixed(1) +
       '%"></div></div>' +
-      '<div class="task-meta">' +
-      '<span class="meta-item"><b>' +
-      percentText +
-      "%</b><span>进度</span></span>" +
-      '<span class="meta-item"><b>' +
+      '<div class="meta">' +
+      "<span>进度 " +
       completed +
       " / " +
       total +
-      "</b><span>碎片</span></span>" +
-      '<span class="meta-item"><b>' +
+      "（" +
+      percent.toFixed(1) +
+      "%）</span>" +
+      "<span>速度 " +
       speed +
-      "</b><span>速度</span></span>" +
-      '<span class="meta-item"><b>' +
+      "</span>" +
+      "<span>已下载 " +
       formatSize(task.bytes || 0) +
-      "</b><span>已下载</span></span>" +
-      '<span class="meta-item task-time">' +
+      "</span>" +
+      "<span>创建于 " +
       formatTime(task.created_at) +
       "</span>" +
       "</div>" +
       (task.error
         ? '<div class="task-error">' + escapeHtml(task.error) + "</div>"
         : "") +
-      "</div>" +
       (actions.length
-        ? '<div class="task-actions">' + actions.join("") + "</div>"
-        : '<div class="task-actions"></div>') +
-      "</article>"
+        ? '<div class="actions">' + actions.join("") + "</div>"
+        : "") +
+      "</div>"
     );
   }
 
@@ -538,6 +370,7 @@
           task.status === "cancelled"
         ) {
           closeSSE(id);
+          if (task.status === "completed") loadFiles();
         }
       } catch (e) {
         /* ignore */
@@ -563,7 +396,6 @@
       Array.from(state.tasks.keys()).forEach(function (id) {
         if (!seen.has(id)) {
           state.tasks.delete(id);
-          state.rendered.delete(id);
           closeSSE(id);
         }
       });
@@ -603,11 +435,9 @@
       });
       remember(cmdline);
       upsertTask(task);
-      state.filter = "all";
       renderTasks();
       subscribe(task.id);
       $("#cmdline").value = "";
-      toast("任务已加入队列：" + (task.name || task.id), "success");
       loadTasks();
     } catch (e) {
       showError(e.message);
@@ -659,7 +489,7 @@
         });
         loadTasks();
       } catch (e) {
-        toast(e.message, "error");
+        alert(e.message);
       }
       return;
     }
@@ -671,7 +501,7 @@
         });
         loadTasks();
       } catch (e) {
-        toast(e.message, "error");
+        alert(e.message);
       }
       return;
     }
@@ -690,12 +520,12 @@
           { method: "DELETE" }
         );
         state.tasks.delete(id);
-        state.rendered.delete(id);
         state.selected.delete(id);
         closeSSE(id);
         renderTasks();
+        if (deleteFile) loadFiles();
       } catch (e) {
-        toast(e.message, "error");
+        alert(e.message);
       }
     }
   }
@@ -706,7 +536,7 @@
   }
 
   async function batchAction(action) {
-    const selected = visibleTasks().filter((t) => state.selected.has(t.id));
+    const selected = sortedTasks().filter((t) => state.selected.has(t.id));
     if (!selected.length) return;
 
     let ids = [];
@@ -724,7 +554,7 @@
         )
         .map((t) => t.id);
       if (!ids.length) {
-        toast("所选任务中没有可取消的任务", "warn");
+        alert("所选任务中没有可取消的任务");
         return;
       }
       skipped = selected.length - ids.length;
@@ -737,7 +567,7 @@
         .filter((t) => t.status === "failed" || t.status === "cancelled")
         .map((t) => t.id);
       if (!ids.length) {
-        toast("所选任务中没有可重试的任务", "warn");
+        alert("所选任务中没有可重试的任务");
         return;
       }
       skipped = selected.length - ids.length;
@@ -748,7 +578,7 @@
         .filter((t) => t.status !== "running" && t.status !== "merging")
         .map((t) => t.id);
       if (!ids.length) {
-        toast("所选任务中有正在运行或合并的任务，请先取消后再删除", "warn");
+        alert("所选任务中有正在运行或合并的任务，请先取消后再删除");
         return;
       }
       skipped = selected.length - ids.length;
@@ -789,22 +619,57 @@
       }
 
       await loadTasks();
+      if (deleteFile && okIds.length) loadFiles();
 
       if (failed.length) {
-        toast(
+        alert(
           "操作完成，但有 " +
             failed.length +
             " 项失败：\n" +
             failed
               .map((r) => taskName(r.id) + "：" + (r.error || "未知错误"))
-              .join("\n"),
-          "error"
+              .join("\n")
         );
-      } else {
-        toast("批量操作完成，共 " + okIds.length + " 项", "success");
       }
     } catch (e) {
-      toast(e.message, "error");
+      alert(e.message);
+    }
+  }
+
+  /* ---------------- 文件 ---------------- */
+
+  async function loadFiles() {
+    try {
+      const data = await api("/api/files");
+      const files = (data && data.files) || [];
+      const box = $("#files");
+
+      if (!files.length) {
+        box.innerHTML = '<div class="empty">暂无文件</div>';
+        return;
+      }
+
+      box.innerHTML = files
+        .map(function (f) {
+          return (
+            '<div class="file">' +
+            '<span class="file-name">' +
+            escapeHtml(f.name) +
+            "</span>" +
+            '<span class="file-meta">' +
+            formatSize(f.size) +
+            " · " +
+            formatTime(f.mod_time) +
+            "</span>" +
+            '<a href="' +
+            escapeHtml(withToken("/api/files/" + encodeURIComponent(f.name))) +
+            '" download>下载</a>' +
+            "</div>"
+          );
+        })
+        .join("");
+    } catch (e) {
+      /* ignore */
     }
   }
 
@@ -915,6 +780,7 @@
     $("#btn-create").addEventListener("click", createTask);
     $("#btn-probe").addEventListener("click", probe);
     $("#btn-refresh").addEventListener("click", loadTasks);
+    $("#btn-files-refresh").addEventListener("click", loadFiles);
     $("#btn-settings").addEventListener("click", openSettings);
     $("#btn-settings-close").addEventListener("click", closeSettings);
     $("#mask").addEventListener("click", closeSettings);
@@ -954,18 +820,12 @@
       updateBatchBar();
     });
 
-    $("#task-filters").addEventListener("click", function (e) {
-      const btn = e.target.closest("[data-filter]");
-      if (!btn) return;
-      setFilter(btn.getAttribute("data-filter"));
-    });
-
     $("#select-all").addEventListener("change", function (e) {
-      const list = visibleTasks();
+      const list = sortedTasks();
       if (e.target.checked) {
         list.forEach((t) => state.selected.add(t.id));
       } else {
-        list.forEach((t) => state.selected.delete(t.id));
+        state.selected.clear();
       }
       renderTasks();
     });
@@ -983,15 +843,15 @@
     state.token = localStorage.getItem("m3u8_token") || "";
     loadRecent();
     bind();
-    tickClock();
     checkHealth();
     loadVersion();
     loadConfig();
     loadTasks();
+    loadFiles();
 
-    setInterval(tickClock, 1000);
     setInterval(checkHealth, 30000);
     setInterval(loadTasks, 5000);
+    setInterval(loadFiles, 15000);
   }
 
   if (document.readyState === "loading") {
