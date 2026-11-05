@@ -113,7 +113,7 @@ func ParseOptions(args []string, cfg AppConfig) (DownloadOptions, error) {
 
 	threads := cfg.DefaultThreads
 	if threads <= 0 {
-		threads = 32
+		threads = 8
 	}
 	retries := cfg.MaxRetries
 

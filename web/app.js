@@ -515,8 +515,8 @@
     try {
       const cfg = await api("/api/config");
       state.config = cfg;
-      $("#cfg-threads").value = cfg.default_threads || 32;
-      $("#cfg-timeout").value = cfg.timeout_sec || 15;
+      $("#cfg-threads").value = cfg.default_threads || 8;
+      $("#cfg-timeout").value = cfg.timeout_sec || 60;
       $("#cfg-retries").value = cfg.max_retries || 0;
       $("#cfg-proxy").value = cfg.proxy || "";
       $("#cfg-insecure").checked = !!cfg.insecure;
@@ -557,8 +557,8 @@
       .filter(Boolean);
 
     const cfg = {
-      default_threads: parseInt($("#cfg-threads").value, 10) || 32,
-      timeout_sec: parseInt($("#cfg-timeout").value, 10) || 15,
+      default_threads: parseInt($("#cfg-threads").value, 10) || 8,
+      timeout_sec: parseInt($("#cfg-timeout").value, 10) || 60,
       max_retries: parseInt($("#cfg-retries").value, 10) || 0,
       proxy: $("#cfg-proxy").value.trim(),
       insecure: $("#cfg-insecure").checked,

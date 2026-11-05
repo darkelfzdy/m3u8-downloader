@@ -53,7 +53,7 @@ func DefaultConfig() AppConfig {
 	}
 
 	return AppConfig{
-		DefaultThreads: 32,
+		DefaultThreads: 8,
 		TimeoutSec:     60,
 		MaxRetries:     5,
 		Proxy:          "",
@@ -122,7 +122,7 @@ func SaveConfig(path string, cfg AppConfig) error {
 
 func normalizeConfig(cfg *AppConfig) {
 	if cfg.DefaultThreads <= 0 {
-		cfg.DefaultThreads = 32
+		cfg.DefaultThreads = 8
 	}
 	if cfg.DefaultThreads > 256 {
 		cfg.DefaultThreads = 256
@@ -138,7 +138,7 @@ func normalizeConfig(cfg *AppConfig) {
 // ValidateConfig 校验并规范化 Web 端提交的配置。
 func ValidateConfig(cfg *AppConfig) error {
 	if cfg.DefaultThreads <= 0 {
-		cfg.DefaultThreads = 32
+		cfg.DefaultThreads = 8
 	}
 	if cfg.DefaultThreads > 256 {
 		return fmt.Errorf("默认线程数不能超过 256")

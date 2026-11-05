@@ -2,9 +2,11 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"log"
+	"math/rand"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -35,25 +37,31 @@ type DownloadProgress struct {
 
 // Downloader 持有单个任务独立的 HTTP 客户端与请求头，避免全局状态互相污染。
 type Downloader struct {
-	client  tls_client.HttpClient
-	headers map[string]string
-	opts    DownloadOptions
-	timeout time.Duration
+	client        tls_client.HttpClient
+	headers       map[string]string
+	opts          DownloadOptions
+	headerTimeout time.Duration // 连接 + TLS 握手 + 等待响应头的上限
+	idleTimeout   time.Duration // 读取 body 时允许的最长无数据间隔
 }
 
-// minRequestTimeout 是单次请求的最小超时，避免慢速源因默认值过小而频繁中断。
-const minRequestTimeout = 60 * time.Second
+const (
+	// minIdleTimeout 是 body 读空闲超时的下限，避免慢速源因配置过小而频繁中断。
+	minIdleTimeout = 60 * time.Second
+	// defaultHeaderTimeout 是连接与等待响应头的默认上限。
+	defaultHeaderTimeout = 30 * time.Second
+)
 
 // NewDownloader 根据任务参数初始化带浏览器指纹的 HTTP 客户端与请求头。
 func NewDownloader(opts DownloadOptions, cfg AppConfig) (*Downloader, error) {
-	timeout := time.Duration(cfg.TimeoutSec) * time.Second
-	if timeout < minRequestTimeout {
-		timeout = minRequestTimeout
+	idleTimeout := time.Duration(cfg.TimeoutSec) * time.Second
+	if idleTimeout < minIdleTimeout {
+		idleTimeout = minIdleTimeout
 	}
 
 	options := []tls_client.HttpClientOption{
-		// Client 层超时与 context 超时保持一致，给慢速大碎片留足时间。
-		tls_client.WithTimeoutSeconds(int(timeout.Seconds())),
+		// 关闭 tls-client 的整体硬超时（默认 30s 会切断正在稳定传输的慢速大碎片），
+		// 改由 Fetch 内的「响应头超时 + body 读空闲超时」两段式看门狗控制。
+		tls_client.WithTimeoutMilliseconds(0),
 		// 核心防风控点：强制指定 TLS 握手及 HTTP/2 帧特征为真实的 Chrome 146 浏览器
 		tls_client.WithClientProfile(profiles.Chrome_146),
 	}
@@ -65,8 +73,10 @@ func NewDownloader(opts DownloadOptions, cfg AppConfig) (*Downloader, error) {
 	// 注入代理配置（优先使用任务指定的 -proxy，其次读取环境变量）
 	if opts.Proxy != "" {
 		options = append(options, tls_client.WithProxyUrl(opts.Proxy))
+		log.Printf("网络参数: 使用任务指定代理 %s", opts.Proxy)
 	} else if sysProxy := os.Getenv("HTTP_PROXY"); sysProxy != "" {
 		options = append(options, tls_client.WithProxyUrl(sysProxy))
+		log.Printf("网络参数: 使用环境变量代理 HTTP_PROXY=%s", sysProxy)
 	}
 
 	client, err := tls_client.NewHttpClient(tls_client.NewNoopLogger(), options...)
@@ -86,7 +96,16 @@ func NewDownloader(opts DownloadOptions, cfg AppConfig) (*Downloader, error) {
 		}
 	}
 
-	return &Downloader{client: client, headers: headers, opts: opts, timeout: timeout}, nil
+	log.Printf("网络参数: 并发 %d | 响应头超时 %s | 读空闲超时 %s",
+		opts.Threads, defaultHeaderTimeout, idleTimeout)
+
+	return &Downloader{
+		client:        client,
+		headers:       headers,
+		opts:          opts,
+		headerTimeout: defaultHeaderTimeout,
+		idleTimeout:   idleTimeout,
+	}, nil
 }
 
 // Headers 返回当前生效的请求头（只读用途）。
@@ -94,18 +113,30 @@ func (d *Downloader) Headers() map[string]string {
 	return d.headers
 }
 
-// Fetch 发起带有完整浏览器特征与顺序控制的 HTTP 请求。
-func (d *Downloader) Fetch(ctx context.Context, reqURL string) ([]byte, error) {
-	// 用 context 再兜一层超时：即使底层 Client.Timeout 在 DNS 解析或连接阶段失效，
-	// 也能保证请求不会无限期挂起。
-	if d.timeout > 0 {
-		var cancel context.CancelFunc
-		ctx, cancel = context.WithTimeout(ctx, d.timeout)
-		defer cancel()
-	}
+// errHeaderTimeout / errIdleTimeout 用于把看门狗超时与用户主动取消区分开。
+var (
+	errHeaderTimeout = errors.New("等待响应头超时")
+	errIdleTimeout   = errors.New("读取响应体空闲超时")
+)
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, reqURL, nil)
+// Fetch 发起带有完整浏览器特征与顺序控制的 HTTP 请求。
+// 超时采用两段式看门狗：连接/响应头阶段受 headerTimeout 约束；
+// body 读取阶段只要持续有数据就不会被切断，仅在连续 idleTimeout 无数据时失败。
+func (d *Downloader) Fetch(ctx context.Context, reqURL string) ([]byte, error) {
+	reqCtx, cancel := context.WithCancel(ctx)
+	defer cancel()
+
+	var timedOut atomic.Int32
+
+	// 阶段一：从发起到拿到响应头，最多等 headerTimeout。
+	headerTimer := time.AfterFunc(d.headerTimeout, func() {
+		timedOut.Store(1)
+		cancel()
+	})
+
+	req, err := http.NewRequestWithContext(reqCtx, http.MethodGet, reqURL, nil)
 	if err != nil {
+		headerTimer.Stop()
 		return nil, err
 	}
 
@@ -119,15 +150,54 @@ func (d *Downloader) Fetch(ctx context.Context, reqURL string) ([]byte, error) {
 	req.Header[http.HeaderOrderKey] = orderKeys
 
 	resp, err := d.client.Do(req)
+	headerTimer.Stop()
 	if err != nil {
+		if timedOut.Load() == 1 {
+			return nil, fmt.Errorf("%w(%s)", errHeaderTimeout, d.headerTimeout)
+		}
 		return nil, err
 	}
 	defer resp.Body.Close()
 
+	// 若响应头恰好在超时边界返回，此时 reqCtx 已被取消，直接按响应头超时处理。
+	if timedOut.Load() == 1 {
+		return nil, fmt.Errorf("%w(%s)", errHeaderTimeout, d.headerTimeout)
+	}
+
 	if resp.StatusCode != 200 {
 		return nil, fmt.Errorf("HTTP 状态码: %d", resp.StatusCode)
 	}
-	return io.ReadAll(resp.Body)
+
+	// 阶段二：body 读空闲看门狗。每次成功读到数据就重置计时器。
+	idleTimer := time.AfterFunc(d.idleTimeout, func() {
+		timedOut.Store(1)
+		cancel()
+	})
+	defer idleTimer.Stop()
+
+	data, err := io.ReadAll(&idleResetReader{r: resp.Body, timer: idleTimer, d: d.idleTimeout})
+	if err != nil {
+		if timedOut.Load() == 1 {
+			return nil, fmt.Errorf("%w(%s 无数据)", errIdleTimeout, d.idleTimeout)
+		}
+		return nil, err
+	}
+	return data, nil
+}
+
+// idleResetReader 在每次读到数据后重置空闲计时器，用于实现「读空闲超时」。
+type idleResetReader struct {
+	r     io.Reader
+	timer *time.Timer
+	d     time.Duration
+}
+
+func (r *idleResetReader) Read(p []byte) (int, error) {
+	n, err := r.r.Read(p)
+	if n > 0 {
+		r.timer.Reset(r.d)
+	}
+	return n, err
 }
 
 // ParseTsList 解析 M3U8 播放列表文本，提取出所有 TS 切片的下载直链。
@@ -246,15 +316,21 @@ func (d *Downloader) DownloadAll(ctx context.Context, tsList []TsInfo, savePath 
 	copy(pending, tsList)
 
 	const maxRounds = 3
+	// 最后一轮把并发压到 4，避免失败碎片继续满并发互抢带宽。
+	const lastRoundThreads = 4
 	var lastErr error
 	for round := 1; round <= maxRounds && len(pending) > 0; round++ {
+		threads := d.opts.Threads
+		if round == maxRounds && threads > lastRoundThreads {
+			threads = lastRoundThreads
+		}
 		if round > 1 {
-			log.Printf("第 %d 轮重试：剩余 %d 个碎片", round, len(pending))
+			log.Printf("第 %d 轮重试：剩余 %d 个碎片，并发 %d", round, len(pending), threads)
 			if err := sleepCtx(ctx, time.Duration(round)*2*time.Second); err != nil {
 				break
 			}
 		}
-		failed := d.downloadBatch(ctx, pending, savePath, key, &completed, &bytes)
+		failed := d.downloadBatch(ctx, pending, savePath, key, &completed, &bytes, threads)
 		if len(failed) == 0 {
 			pending = nil
 			break
@@ -276,8 +352,10 @@ func (d *Downloader) DownloadAll(ctx context.Context, tsList []TsInfo, savePath 
 }
 
 // downloadBatch 用固定大小的 worker 池下载一批碎片，返回其中仍失败的碎片。
-func (d *Downloader) downloadBatch(ctx context.Context, list []TsInfo, savePath, key string, completed *int32, bytes *int64) []TsInfo {
-	threads := d.opts.Threads
+func (d *Downloader) downloadBatch(ctx context.Context, list []TsInfo, savePath, key string, completed *int32, bytes *int64, threads int) []TsInfo {
+	if threads <= 0 {
+		threads = d.opts.Threads
+	}
 	if threads <= 0 {
 		threads = 1
 	}
@@ -360,8 +438,10 @@ func (d *Downloader) downloadTs(ctx context.Context, ts TsInfo, savePath string,
 			} else {
 				lastErr = fmt.Errorf("响应内容为空")
 			}
-			if sleepErr := sleepCtx(ctx, 1*time.Second); sleepErr != nil {
-				return 0, sleepErr
+			if i < retries-1 {
+				if sleepErr := sleepCtx(ctx, retryBackoff(i)); sleepErr != nil {
+					return 0, sleepErr
+				}
 			}
 			continue
 		}
@@ -437,4 +517,17 @@ func sleepCtx(ctx context.Context, d time.Duration) error {
 	case <-t.C:
 		return nil
 	}
+}
+
+// retryBackoff 返回第 n 次重试前的等待时间：指数增长 + ±10% 抖动，避免所有 worker 同时重试。
+func retryBackoff(n int) time.Duration {
+	if n < 0 {
+		n = 0
+	}
+	if n > 3 {
+		n = 3
+	}
+	base := time.Duration(1<<uint(n)) * time.Second // 1s, 2s, 4s, 8s
+	jitter := time.Duration(rand.Int63n(int64(base/5)+1)) - base/10
+	return base + jitter
 }
