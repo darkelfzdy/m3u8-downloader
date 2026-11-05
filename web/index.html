@@ -41,8 +41,23 @@
 
     <section class="card">
       <div class="row between">
-        <h2>任务列表</h2>
+        <div class="row-title">
+          <label class="check all-check">
+            <input id="select-all" type="checkbox">
+            <span>全选</span>
+          </label>
+          <h2>任务列表</h2>
+        </div>
         <button id="btn-refresh" class="ghost">刷新</button>
+      </div>
+      <div id="batch-bar" class="batch-bar hidden">
+        <span id="batch-count" class="muted">已选 0 项</span>
+        <div class="batch-actions">
+          <button id="btn-batch-cancel" data-batch="cancel">取消所选</button>
+          <button id="btn-batch-retry" data-batch="retry">重试所选</button>
+          <button id="btn-batch-delete" data-batch="delete" class="danger">删除记录</button>
+          <button id="btn-batch-delete-file" data-batch="delete-file" class="danger">删除记录和文件</button>
+        </div>
       </div>
       <div id="tasks" class="tasks">
         <div class="empty">暂无任务</div>

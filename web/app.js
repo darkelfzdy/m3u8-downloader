@@ -17,6 +17,7 @@
     tasks: new Map(),
     sse: new Map(),
     recent: [],
+    selected: new Set(),
     token: "",
     config: null,
   };
@@ -181,18 +182,76 @@
 
   /* ---------------- 任务 ---------------- */
 
-  function renderTasks() {
-    const container = $("#tasks");
-    const list = Array.from(state.tasks.values()).sort(
+  function sortedTasks() {
+    return Array.from(state.tasks.values()).sort(
       (a, b) => new Date(b.created_at) - new Date(a.created_at)
     );
+  }
+
+  function renderTasks() {
+    const container = $("#tasks");
+    const list = sortedTasks();
 
     if (!list.length) {
       container.innerHTML = '<div class="empty">暂无任务</div>';
+      syncSelection(list);
       return;
     }
 
     container.innerHTML = list.map(renderTask).join("");
+    syncSelection(list);
+  }
+
+  // syncSelection 清理已不存在的选中项，并同步全选框与批量操作栏。
+  function syncSelection(list) {
+    const ids = new Set(list.map((t) => t.id));
+    Array.from(state.selected).forEach((id) => {
+      if (!ids.has(id)) state.selected.delete(id);
+    });
+
+    const all = $("#select-all");
+    const selectedCount = list.filter((t) => state.selected.has(t.id)).length;
+    all.disabled = list.length === 0;
+    all.checked = list.length > 0 && selectedCount === list.length;
+    all.indeterminate = selectedCount > 0 && selectedCount < list.length;
+
+    updateBatchBar(list);
+  }
+
+  function updateBatchBar(list) {
+    list = list || sortedTasks();
+    const selected = list.filter((t) => state.selected.has(t.id));
+
+    $("#batch-bar").classList.toggle("hidden", selected.length === 0);
+    $("#batch-count").textContent = "已选 " + selected.length + " 项";
+
+    const cancelable = selected.filter(
+      (t) =>
+        t.status === "queued" ||
+        t.status === "running" ||
+        t.status === "merging"
+    ).length;
+    const retryable = selected.filter(
+      (t) => t.status === "failed" || t.status === "cancelled"
+    ).length;
+    const deletable = selected.filter(
+      (t) => t.status !== "running" && t.status !== "merging"
+    ).length;
+
+    setBatchEnabled("#btn-batch-cancel", cancelable, "所选任务中没有可取消的任务");
+    setBatchEnabled("#btn-batch-retry", retryable, "所选任务中没有可重试的任务");
+    setBatchEnabled("#btn-batch-delete", deletable, "所选任务中没有可删除的任务");
+    setBatchEnabled(
+      "#btn-batch-delete-file",
+      deletable,
+      "所选任务中没有可删除的任务"
+    );
+  }
+
+  function setBatchEnabled(sel, count, hint) {
+    const btn = $(sel);
+    btn.disabled = count === 0;
+    btn.title = count === 0 ? hint : "";
   }
 
   function renderTask(task) {
@@ -204,6 +263,7 @@
       task.status === "running" || task.status === "merging";
     const canRetry =
       task.status === "failed" || task.status === "cancelled";
+    const selected = state.selected.has(task.id);
 
     const actions = [];
     if (isRunning || task.status === "queued") {
@@ -234,8 +294,16 @@
     return (
       '<div class="task ' +
       escapeHtml(task.status) +
+      (selected ? " selected" : "") +
       '">' +
       '<div class="task-head">' +
+      '<label class="task-select">' +
+      '<input type="checkbox" data-select="' +
+      escapeHtml(task.id) +
+      '"' +
+      (selected ? " checked" : "") +
+      ' aria-label="选择任务">' +
+      "</label>" +
       '<span class="task-name">' +
       escapeHtml(task.name || task.id) +
       ".mp4</span>" +
@@ -452,12 +520,119 @@
           { method: "DELETE" }
         );
         state.tasks.delete(id);
+        state.selected.delete(id);
         closeSSE(id);
         renderTasks();
         if (deleteFile) loadFiles();
       } catch (e) {
         alert(e.message);
       }
+    }
+  }
+
+  function taskName(id) {
+    const task = state.tasks.get(id);
+    return task ? task.name || id : id;
+  }
+
+  async function batchAction(action) {
+    const selected = sortedTasks().filter((t) => state.selected.has(t.id));
+    if (!selected.length) return;
+
+    let ids = [];
+    let skipped = 0;
+    let deleteFile = false;
+    let tip = "";
+
+    if (action === "cancel") {
+      ids = selected
+        .filter(
+          (t) =>
+            t.status === "queued" ||
+            t.status === "running" ||
+            t.status === "merging"
+        )
+        .map((t) => t.id);
+      if (!ids.length) {
+        alert("所选任务中没有可取消的任务");
+        return;
+      }
+      skipped = selected.length - ids.length;
+      tip =
+        "确定取消选中的 " +
+        ids.length +
+        " 个任务？\n取消后临时碎片目录会被清理。";
+    } else if (action === "retry") {
+      ids = selected
+        .filter((t) => t.status === "failed" || t.status === "cancelled")
+        .map((t) => t.id);
+      if (!ids.length) {
+        alert("所选任务中没有可重试的任务");
+        return;
+      }
+      skipped = selected.length - ids.length;
+      tip = "确定重试选中的 " + ids.length + " 个任务？";
+    } else if (action === "delete" || action === "delete-file") {
+      deleteFile = action === "delete-file";
+      ids = selected
+        .filter((t) => t.status !== "running" && t.status !== "merging")
+        .map((t) => t.id);
+      if (!ids.length) {
+        alert("所选任务中有正在运行或合并的任务，请先取消后再删除");
+        return;
+      }
+      skipped = selected.length - ids.length;
+      tip = deleteFile
+        ? "确定删除选中的 " +
+          ids.length +
+          " 个任务记录，并同时删除成品文件和临时碎片？\n删除文件后无法恢复。"
+        : "确定删除选中的 " + ids.length + " 个任务记录？";
+    } else {
+      return;
+    }
+
+    if (skipped > 0) {
+      tip += "\n另有 " + skipped + " 个任务状态不满足，将被跳过。";
+    }
+    if (!confirm(tip)) return;
+
+    const apiAction = action === "delete-file" ? "delete" : action;
+
+    try {
+      const data = await api("/api/tasks/batch", {
+        method: "POST",
+        body: JSON.stringify({
+          action: apiAction,
+          ids: ids,
+          delete_file: deleteFile,
+        }),
+      });
+      const results = (data && data.results) || [];
+      const okIds = results.filter((r) => r.ok).map((r) => r.id);
+      const failed = results.filter((r) => !r.ok);
+
+      if (apiAction === "delete") {
+        okIds.forEach(function (id) {
+          state.selected.delete(id);
+          closeSSE(id);
+        });
+      }
+
+      await loadTasks();
+      if (deleteFile && okIds.length) loadFiles();
+
+      if (failed.length) {
+        alert(
+          "操作完成，但有 " +
+            failed.length +
+            " 项失败：\n" +
+            failed
+              .map((r) => taskName(r.id) + "：" + (r.error || "未知错误"))
+              .join("\n")
+        );
+      }
+    } catch (e) {
+      alert(e.message);
     }
   }
 
@@ -629,6 +804,36 @@
       const btn = e.target.closest("[data-action]");
       if (!btn) return;
       taskAction(btn.getAttribute("data-action"), btn.getAttribute("data-id"));
+    });
+
+    $("#tasks").addEventListener("change", function (e) {
+      const box = e.target.closest("[data-select]");
+      if (!box) return;
+      const id = box.getAttribute("data-select");
+      if (box.checked) {
+        state.selected.add(id);
+      } else {
+        state.selected.delete(id);
+      }
+      const card = box.closest(".task");
+      if (card) card.classList.toggle("selected", box.checked);
+      updateBatchBar();
+    });
+
+    $("#select-all").addEventListener("change", function (e) {
+      const list = sortedTasks();
+      if (e.target.checked) {
+        list.forEach((t) => state.selected.add(t.id));
+      } else {
+        state.selected.clear();
+      }
+      renderTasks();
+    });
+
+    $("#batch-bar").addEventListener("click", function (e) {
+      const btn = e.target.closest("[data-batch]");
+      if (!btn || btn.disabled) return;
+      batchAction(btn.getAttribute("data-batch"));
     });
   }
 

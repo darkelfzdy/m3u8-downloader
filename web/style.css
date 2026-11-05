@@ -205,6 +205,47 @@ main {
   margin-bottom: 0;
 }
 
+.row-title {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
+}
+
+.all-check {
+  color: var(--muted);
+  font-size: 12px;
+  user-select: none;
+}
+
+.all-check input {
+  width: auto;
+}
+
+.batch-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin-top: 10px;
+  padding: 8px 10px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+}
+
+.batch-actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.batch-actions button {
+  font-size: 12px;
+  padding: 5px 10px;
+}
+
 .muted {
   color: var(--muted);
   font-size: 12px;
@@ -281,6 +322,25 @@ main {
   border-radius: 8px;
   padding: 12px;
   min-width: 0;
+}
+
+.task.selected {
+  border-color: rgba(59, 130, 246, 0.65);
+  background: rgba(59, 130, 246, 0.07);
+}
+
+.task-select {
+  display: flex;
+  align-items: center;
+  flex: 0 0 auto;
+}
+
+.task-select input {
+  width: 15px;
+  height: 15px;
+  margin: 0;
+  cursor: pointer;
+  accent-color: var(--primary);
 }
 
 .task-head {

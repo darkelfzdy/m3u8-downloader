@@ -71,8 +71,72 @@ func (s *Server) handleTasks(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+// handleTasksBatch 批量取消、重试或删除任务。
+// 每个任务独立处理，单项失败不会影响其余项，逐项返回结果供前端提示。
+func (s *Server) handleTasksBatch(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		writeError(w, http.StatusMethodNotAllowed, "方法不允许")
+		return
+	}
+
+	var req struct {
+		Action     string   `json:"action"`
+		IDs        []string `json:"ids"`
+		DeleteFile bool     `json:"delete_file"`
+	}
+	if err := readJSON(r, &req); err != nil {
+		writeError(w, http.StatusBadRequest, "请求体格式错误")
+		return
+	}
+	if len(req.IDs) == 0 {
+		writeError(w, http.StatusBadRequest, "未选择任务")
+		return
+	}
+	if len(req.IDs) > 500 {
+		writeError(w, http.StatusBadRequest, "一次最多操作 500 个任务")
+		return
+	}
+
+	var fn func(string) error
+	switch req.Action {
+	case "cancel":
+		fn = s.manager.Cancel
+	case "retry":
+		fn = s.manager.Retry
+	case "delete":
+		fn = func(id string) error { return s.manager.Delete(id, req.DeleteFile) }
+	default:
+		writeError(w, http.StatusBadRequest, "不支持的操作: "+req.Action)
+		return
+	}
+
+	type itemResult struct {
+		ID    string `json:"id"`
+		OK    bool   `json:"ok"`
+		Error string `json:"error,omitempty"`
+	}
+	results := make([]itemResult, 0, len(req.IDs))
+	for _, id := range req.IDs {
+		if id == "" {
+			continue
+		}
+		err := fn(id)
+		item := itemResult{ID: id, OK: err == nil}
+		if err != nil {
+			item.Error = err.Error()
+		}
+		results = append(results, item)
+	}
+
+	writeJSON(w, http.StatusOK, map[string]any{"results": results})
+}
+
 func (s *Server) handleTaskItem(w http.ResponseWriter, r *http.Request) {
 	rest := strings.TrimPrefix(r.URL.Path, "/api/tasks/")
+	if strings.Trim(rest, "/") == "batch" {
+		s.handleTasksBatch(w, r)
+		return
+	}
 	parts := strings.Split(strings.Trim(rest, "/"), "/")
 	if len(parts) == 0 || parts[0] == "" {
 		writeError(w, http.StatusNotFound, "任务不存在")
