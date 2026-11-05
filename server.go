@@ -47,9 +47,19 @@ func (s *Server) Routes() http.Handler {
 	if err != nil {
 		panic(err)
 	}
-	mux.Handle("/", http.FileServer(http.FS(sub)))
+	// 静态资源文件名固定，embed 更新后必须让浏览器重新校验，
+	// 否则升级后可能仍加载缓存中的旧 app.js / style.css。
+	mux.Handle("/", noCache(http.FileServer(http.FS(sub))))
 
 	return logRequests(s.auth(mux))
+}
+
+// noCache 要求浏览器每次使用资源前向服务端确认（可命中 304）。
+func noCache(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Cache-Control", "no-cache")
+		next.ServeHTTP(w, r)
+	})
 }
 
 // auth 对 /api/ 前缀启用可选的 Bearer Token 鉴权。
