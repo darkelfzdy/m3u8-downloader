@@ -1,6 +1,6 @@
 {
-  "default_threads": 32,
-  "timeout_sec": 15,
+  "default_threads": 8,
+  "timeout_sec": 60,
   "max_retries": 5,
   "proxy": "",
   "insecure": false,
