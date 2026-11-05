@@ -1,8 +1,8 @@
 // ==UserScript==
-// @name         M3U8 资源终极嗅探器
-// @namespace    https://github.com/Orochi-Adde/m3u8-downloader
-// @version      1.0.2
-// @description  m3u8-downloader 专属解析适配，智能突破防爬限制，原生零损耗拉伸
+// @name         M3U8 资源终极嗅探器（自改版）
+// @namespace    local.m3u8-sniffer.custom
+// @version      1.0.3
+// @description  m3u8-downloader 专属解析适配，智能突破防爬限制，原生零损耗拉伸（默认不自动展开面板）
 // @author       Orochi-Adde
 // @match        *://*/*
 // @grant        GM_setClipboard
@@ -14,10 +14,7 @@
 // @license      MIT
 // @homepageURL  https://github.com/Orochi-Adde/m3u8-downloader
 // @supportURL   https://github.com/Orochi-Adde/m3u8-downloader/issues
-// @downloadURL  https://raw.githubusercontent.com/Orochi-Adde/m3u8-downloader/main/m3u8-sniffer.user.js
-// @updateURL    https://raw.githubusercontent.com/Orochi-Adde/m3u8-downloader/main/m3u8-sniffer.user.js
-// @run-at       document-start
-// ==UserScript/==
+// ==/UserScript==
 
 (function() {
     'use strict';
@@ -32,7 +29,7 @@
     let isUiMinimized = false;
 
     const COLORS = {
-        main: '#27ae60', ad: '#e74c3c', host: '#aaaaaa', fileNormal: '#85c1e9', 
+        main: '#27ae60', ad: '#e74c3c', host: '#aaaaaa', fileNormal: '#85c1e9',
         fileMaster: '#f39c12', child: '#1abc9c', btnParse: '#8e44ad', warning: '#f1c40f', safe: '#2ecc71'
     };
 
@@ -48,7 +45,7 @@
                 const url = args[0] instanceof Request ? args[0].url : args[0];
                 if (typeof url === 'string' && url.includes('.m3u8')) {
                     // 只要代码发起了 m3u8 请求，瞬间捕获！
-                    processSniffedUrl(url, false); 
+                    processSniffedUrl(url, false);
                 }
             } catch (e) { console.error("Fetch Intercept Error", e); }
             return originalFetch.apply(this, args);
@@ -73,10 +70,12 @@
     // --- 读取本地持久化配置 ---
     let savedProxyEnable = false;
     let savedProxyUrl = 'socks5://127.0.0.1:10808';
+    let savedThreads = '';
     try {
         if (typeof GM_getValue !== 'undefined') {
             savedProxyEnable = GM_getValue('gemini_proxy_enable', false);
             savedProxyUrl = GM_getValue('gemini_proxy_url', 'socks5://127.0.0.1:10808');
+            savedThreads = String(GM_getValue('gemini_threads', '') || '').replace(/[^0-9]/g, '').slice(0, 3);
         }
     } catch (e) {}
 
@@ -98,16 +97,16 @@
 
     function makeRequest(url, strategy) {
         return new Promise((resolve, reject) => {
-            GM_xmlhttpRequest({ 
-                method: "GET", url: url, headers: strategy.headers, anonymous: strategy.anonymous, 
-                onload: resolve, onerror: reject 
+            GM_xmlhttpRequest({
+                method: "GET", url: url, headers: strategy.headers, anonymous: strategy.anonymous,
+                onload: resolve, onerror: reject
             });
         });
     }
 
     function toggleUI(action) {
         if (!uiContainer || !minimizedIcon) return;
-        
+
         if (action === 'show') {
             isUiMinimized = false;
             uiContainer.style.setProperty('display', 'flex', 'important');
@@ -151,18 +150,14 @@
             let isMaster = false, lastResolution = '默认画质';
 
             for (let i = 0; i < lines.length; i++) {
-                const line = lines.length > i ? lines[i].trim() : '';
+                const line = lines[i].trim();
                 if (line.startsWith('#EXT-X-STREAM-INF')) {
                     isMaster = true;
                     const resMatch = line.match(/RESOLUTION=(\d+x\d+)/);
                     lastResolution = resMatch ? resMatch[1] : '未知画质';
-                } else if (!line.startsWith('#') && line.length > 0) {
-                    // 🌟 修复核心：只要不是注释且不为空，即为有效的子 m3u8 链接（兼容带 query 参数的链接）
+                } else if (line.endsWith('.m3u8') && !line.startsWith('#')) {
                     isMaster = true;
-                    try { 
-                        results.push({ url: new URL(line, url).href, res: lastResolution }); 
-                        lastResolution = '默认画质'; 
-                    } catch(e) {}
+                    try { results.push({ url: new URL(line, url).href, res: lastResolution }); lastResolution = '默认画质'; } catch(e) {}
                 }
             }
 
@@ -178,7 +173,7 @@
                 if (['ref', 'cookie', 'headers'].includes(usedStrategy.id)) document.getElementById('chk-ref').checked = true;
                 if (['cookie', 'headers'].includes(usedStrategy.id)) document.getElementById('chk-cookie').checked = true;
                 if (usedStrategy.id === 'headers') document.getElementById('chk-ua').checked = true;
-                
+
                 hintDiv.style.color = COLORS.warning;
                 hintDiv.innerHTML = `🛡️ <b>防爬拦截</b>: 已验证必须挂载 <b>[${usedStrategy.name}]</b> 参数`;
             } else {
@@ -211,7 +206,7 @@
 
     function getTitleHTML(count) {
         return `
-            🔍 M3U8 嗅探列表 (${count}) 
+            🔍 M3U8 嗅探列表 (${count})
             <span style="font-size: 10px; background: #8e44ad; color: #fff; padding: 2px 6px; border-radius: 4px; margin-left: 8px; font-weight: normal; user-select: none;">m3u8-downloader专用解析</span>
             <span style="font-size: 10px; color: #7f8c8d; font-weight: normal; margin-left: 6px; user-select: none;">(Alt+M 显隐)</span>
         `;
@@ -219,13 +214,13 @@
 
     function initUI() {
         if (!isTopWindow || uiContainer || !document.documentElement) return;
-        
+
         minimizedIcon = document.createElement('div');
         minimizedIcon.style.cssText = `
-            display: none !important; position: fixed !important; top: 15% !important; right: 20px !important; 
-            z-index: 2147483647 !important; width: 44px; height: 44px; border-radius: 50%; 
-            background: rgba(39, 174, 96, 0.85); backdrop-filter: blur(5px); color: white; 
-            justify-content: center; align-items: center; cursor: pointer; font-size: 20px; 
+            display: none !important; position: fixed !important; top: 15% !important; right: 20px !important;
+            z-index: 2147483647 !important; width: 44px; height: 44px; border-radius: 50%;
+            background: rgba(39, 174, 96, 0.85); backdrop-filter: blur(5px); color: white;
+            justify-content: center; align-items: center; cursor: pointer; font-size: 20px;
             box-shadow: 0 4px 15px rgba(0,0,0,0.5); border: 2px solid #2ecc71; transition: transform 0.2s;
             user-select: none;
         `;
@@ -238,22 +233,22 @@
 
         uiContainer = document.createElement('div');
         uiContainer.style.cssText = `
-            position: fixed !important; top: 10% !important; right: 20px !important; z-index: 2147483647 !important; 
-            background: rgba(18, 18, 18, 0.95) !important; color: #d4d4d4 !important; padding: 15px !important; 
-            border-radius: 8px !important; box-shadow: 0 8px 24px rgba(0, 0, 0, 0.6) !important; 
-            border: 1px solid #333 !important; 
-            width: clamp(380px, 45vw, 620px); height: 450px; 
-            min-width: 380px !important; min-height: 200px !important; 
-            max-width: 95vw !important; max-height: 95vh !important; 
-            resize: both !important; overflow: hidden !important; 
-            font-family: Consolas, monospace !important; font-size: 12px !important; 
+            position: fixed !important; top: 10% !important; right: 20px !important; z-index: 2147483647 !important;
+            background: rgba(18, 18, 18, 0.95) !important; color: #d4d4d4 !important; padding: 15px !important;
+            border-radius: 8px !important; box-shadow: 0 8px 24px rgba(0, 0, 0, 0.6) !important;
+            border: 1px solid #333 !important;
+            width: clamp(380px, 45vw, 620px); height: 450px;
+            min-width: 380px !important; min-height: 200px !important;
+            max-width: 95vw !important; max-height: 95vh !important;
+            resize: both !important; overflow: hidden !important;
+            font-family: Consolas, monospace !important; font-size: 12px !important;
             flex-direction: column !important; gap: 10px !important; backdrop-filter: blur(10px);
             display: none !important;
         `;
 
         const header = document.createElement('div');
         header.style.cssText = 'display: flex; justify-content: space-between; align-items: center; cursor: move; padding-bottom: 8px; border-bottom: 1px solid rgba(255,255,255,0.1); flex-shrink: 0;';
-        
+
         const title = document.createElement('span');
         title.id = 'm3u8-sniffer-title';
         title.innerHTML = getTitleHTML(0);
@@ -266,7 +261,7 @@
         const advancedBtn = document.createElement('span');
         advancedBtn.innerText = '⚙️ 参数构造器';
         advancedBtn.style.cssText = 'cursor: pointer; color: #f1c40f; font-size: 12px; margin-right: 15px; font-weight: bold; border-bottom: 1px dashed #f1c40f; user-select: none;';
-        
+
         const minBtn = document.createElement('span');
         minBtn.innerText = '➖';
         minBtn.title = '最小化为图标';
@@ -291,19 +286,19 @@
 
         const advancedPanel = document.createElement('div');
         advancedPanel.style.cssText = 'display: none; background: rgba(0,0,0,0.5); padding: 10px; border-radius: 6px; border: 1px dashed #7f8c8d; flex-direction: column; gap: 8px; margin-top: -5px; flex-shrink: 0;';
-        
+
         advancedPanel.innerHTML = `
             <div style="display: flex; justify-content: space-between; align-items: center; border-bottom: 1px dashed #555; padding-bottom: 6px; margin-bottom: 2px;">
                 <span style="color: #bdc3c7; font-weight: bold;">【后端 CLI 参数构造器】</span>
                 <a href="https://github.com/Orochi-Adde/m3u8-downloader" target="_blank" style="color: #3498db; font-size: 10px; text-decoration: none; user-select: none;">🚀 [Orochi-Adde/m3u8-downloader]</a>
             </div>
-            
+
             <div style="display:flex; gap: 12px; flex-wrap: wrap; margin-top: 5px;">
                 <label style="cursor:pointer;" title="使用 -H 添加 Referer 头"><input type="checkbox" id="chk-ref"> 携带 Referer (-H)</label>
                 <label style="cursor:pointer;" title="使用 -c 添加 Cookie"><input type="checkbox" id="chk-cookie"> 携带 Cookie (-c)</label>
                 <label style="cursor:pointer;" title="使用 -H 添加全量 Header 和 UA"><input type="checkbox" id="chk-ua"> 携带全量 Headers / UA (-H)</label>
             </div>
-            
+
             <div style="display:flex; align-items:center; gap: 8px; margin-top: 8px; border-top: 1px dashed #555; padding-top: 8px;">
                 <label style="cursor:pointer; color:#f1c40f;" title="勾选后，复制的参数会带上后面的代理地址">
                     <input type="checkbox" id="chk-proxy" ${savedProxyEnable ? 'checked' : ''}> 启用全局代理 (-p)
@@ -312,13 +307,19 @@
                 <span id="gemini-proxy-save-hint" style="color: #2ecc71; font-size: 10px; display: none;">✔ 已保存</span>
             </div>
 
+            <div style="display:flex; align-items:center; gap: 8px; margin-top: 8px; border-top: 1px dashed #555; padding-top: 8px;">
+                <label style="color:#f1c40f;" title="留空则不传 -n，后端使用配置文件里的 default_threads">并发线程 (-n)</label>
+                <input type="number" id="gemini-threads" min="1" max="256" placeholder="留空 = 使用配置文件" value="${savedThreads}" title="留空则不生成 -n 参数，使用后端配置的默认并发数" style="background:#111; border:1px solid #555; color:#fff; padding:3px 6px; border-radius:3px; font-family:Consolas; width:200px; outline:none;">
+                <span id="gemini-threads-hint" style="color: #2ecc71; font-size: 10px; display: none;">✔ 已保存</span>
+            </div>
+
             <div style="margin-top: 5px; border-top: 1px dashed #555; padding-top: 8px;">
                 <label style="cursor:pointer; color:#e67e22;"><input type="checkbox" id="gemini-force-parse"> 强制显示所有底层链接的"探测"按钮</label>
             </div>
         `;
 
         advancedBtn.onclick = () => { advancedPanel.style.display = advancedPanel.style.display === 'none' ? 'flex' : 'none'; };
-        
+
         advancedPanel.addEventListener('change', (e) => {
             if (e.target.id === 'gemini-force-parse') {
                 isForceParseMode = e.target.checked;
@@ -336,13 +337,21 @@
                 clearTimeout(typeTimer);
                 typeTimer = setTimeout(() => {
                     safeSaveConfig('gemini_proxy_url', e.target.value.trim());
-                    showSaveHint();
+                    showSaveHint('gemini-proxy-save-hint');
+                }, 500);
+            }
+            if (e.target.id === 'gemini-threads') {
+                clearTimeout(typeTimer);
+                typeTimer = setTimeout(() => {
+                    const v = e.target.value.trim().replace(/[^0-9]/g, '').slice(0, 3);
+                    safeSaveConfig('gemini_threads', v);
+                    showSaveHint('gemini-threads-hint');
                 }, 500);
             }
         });
 
-        function showSaveHint() {
-            const hint = document.getElementById('gemini-proxy-save-hint');
+        function showSaveHint(hintId = 'gemini-proxy-save-hint') {
+            const hint = document.getElementById(hintId);
             if (hint) {
                 hint.style.display = 'inline-block';
                 setTimeout(() => { hint.style.display = 'none'; }, 1500);
@@ -404,11 +413,11 @@
 
         const tdFile = document.createElement('td');
         tdFile.style.cssText = 'padding: 8px 4px; vertical-align: top; word-break: break-all;';
-        tdFile.title = url; 
-        
+        tdFile.title = url;
+
         let filename = 'video.m3u8';
         try { filename = new URL(url).pathname.split('/').pop() || 'video.m3u8'; } catch(e){}
-        
+
         let isProbableMaster = false;
         let fileHtml = '';
         if (!isChild) {
@@ -421,7 +430,7 @@
         } else {
             fileHtml = `<span style="color:${COLORS.child};">${filename}</span>`;
         }
-        
+
         const fileContentDiv = document.createElement('div');
         fileContentDiv.innerHTML = fileHtml;
         tdFile.appendChild(fileContentDiv);
@@ -436,20 +445,27 @@
 
         const tdAction = document.createElement('td');
         tdAction.style.cssText = 'padding: 6px 4px; text-align: right; white-space: nowrap; vertical-align: top;';
-        
+
         const copyBtn = document.createElement('button');
         copyBtn.innerText = '复制参数';
         copyBtn.style.cssText = `background: ${COLORS.main}; color: white; border: none; padding: 4px 6px; border-radius: 4px; cursor: pointer; font-size: 11px; font-weight: bold; transition: background 0.2s; display: block; margin-bottom: 4px; width: 100%;`;
-        
+
         copyBtn.onclick = () => {
             const outName = isChild ? `${getAutoFilename()}_${res}` : getAutoFilename();
-            let cmdStr = ` -u "${url}" -n 32`;
-            
+            let cmdStr = ` -u "${url}"`;
+
+            // 并发数：留空不传 -n，让后端使用配置文件/Web 面板里的 default_threads
+            const threadsInput = document.getElementById('gemini-threads');
+            const threadsVal = threadsInput ? parseInt(threadsInput.value, 10) : NaN;
+            if (Number.isFinite(threadsVal) && threadsVal > 0) {
+                cmdStr += ` -n ${Math.min(threadsVal, 256)}`;
+            }
+
             if (document.getElementById('chk-ref').checked) { cmdStr += ` -H "Referer: ${window.location.href}"`; }
             if (document.getElementById('chk-cookie').checked && document.cookie) { cmdStr += ` -c "${document.cookie}"`; }
             if (document.getElementById('chk-ua').checked) { cmdStr += ` -H "User-Agent: ${navigator.userAgent}"`; }
-            
-            if (document.getElementById('chk-proxy').checked) { 
+
+            if (document.getElementById('chk-proxy').checked) {
                 const proxyUrl = document.getElementById('gemini-proxy-url').value.trim();
                 if (proxyUrl) { cmdStr += ` -p "${proxyUrl}"`; }
             }
@@ -470,16 +486,16 @@
             parseBtn.className = 'gemini-hidden-parse';
             parseBtn.style.cssText = `display: ${isForceParseMode ? 'inline-block' : 'none'}; background: ${COLORS.btnParse}; color: white; border: none; padding: 4px 6px; border-radius: 4px; cursor: pointer; font-size: 11px; font-weight: bold; width: 100%;`;
         }
-        
+
         parseBtn.onclick = () => smartParseM3u8(url, tr, parseBtn, tdFile);
 
         tdAction.appendChild(copyBtn);
-        tdAction.appendChild(parseBtn); 
+        tdAction.appendChild(parseBtn);
 
         tr.appendChild(tdSource);
         tr.appendChild(tdFile);
         tr.appendChild(tdAction);
-        
+
         if (insertAfter && insertAfter.parentNode) { insertAfter.after(tr); } else { tbodyElement.appendChild(tr); }
     }
 
@@ -487,16 +503,16 @@
         if (m3u8List.has(url)) return;
         if (isTopWindow) {
             m3u8List.add(url);
-            
+
+            // ===== 修改：初始化后只显示悬浮图标，不弹出面板 =====
             if (!uiContainer) {
                 initUI();
-                toggleUI('show');
-            } else if (!isUiMinimized) {
-                uiContainer.style.setProperty('display', 'flex', 'important');
+                toggleUI('minimize');   // 仅显示悬浮图标
             }
+            // 如果已经初始化，不做任何自动显示（保留现有状态）
 
             addRowToTable(url, isAd);
-            
+
             document.getElementById('m3u8-sniffer-title').innerHTML = getTitleHTML(m3u8List.size);
             if (minimizedIcon) minimizedIcon.title = `已抓取 ${m3u8List.size} 个链接 (点击展开)`;
 
@@ -508,11 +524,11 @@
 
     if (isTopWindow) {
         window.addEventListener('message', (event) => { if (event.data && event.data.type === 'GEMINI_M3U8_SNIFFED') { processSniffedUrl(event.data.url, event.data.isAd); }});
-        
-        document.addEventListener('keydown', (e) => { 
-            if (e.altKey && e.key.toLowerCase() === 'm') { 
+
+        document.addEventListener('keydown', (e) => {
+            if (e.altKey && e.key.toLowerCase() === 'm') {
                 if (!uiContainer) {
-                    initUI(); 
+                    initUI();
                     toggleUI('show');
                 } else {
                     toggleUI();
@@ -549,7 +565,7 @@
             const regex = /(https?:\/\/[a-zA-Z0-9_./-]+\.m3u8[a-zA-Z0-9_./?=A-Z-]*)/ig;
             const matches = htmlStr.match(regex);
             if (matches) { matches.forEach(url => processSniffedUrl(url.replace(/\\/g, ''))); }
-        }, 500); 
+        }, 500);
     }
 
     window.addEventListener('load', () => {
