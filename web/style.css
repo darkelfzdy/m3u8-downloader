@@ -273,6 +273,26 @@ main {
   color: var(--muted);
   font-size: 12px;
   margin-bottom: 6px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.link-btn {
+  background: transparent;
+  border: none;
+  padding: 0;
+  color: var(--muted);
+  font-size: 12px;
+  cursor: pointer;
+  border-radius: 4px;
+}
+
+.link-btn:hover:not(:disabled) {
+  background: transparent;
+  color: var(--danger);
+  text-decoration: underline;
 }
 
 .recent {
@@ -280,6 +300,29 @@ main {
   flex-direction: column;
   gap: 6px;
   min-width: 0;
+}
+
+.recent-row {
+  display: flex;
+  align-items: stretch;
+  gap: 6px;
+  min-width: 0;
+}
+
+.recent-del {
+  flex: 0 0 auto;
+  padding: 0 9px;
+  font-size: 12px;
+  line-height: 1;
+  color: var(--muted);
+  background: transparent;
+  border: 1px dashed var(--border);
+}
+
+.recent-del:hover:not(:disabled) {
+  color: var(--danger);
+  border-color: rgba(239, 68, 68, 0.5);
+  background: rgba(239, 68, 68, 0.1);
 }
 
 .recent-item {
@@ -294,7 +337,7 @@ main {
   overflow: hidden;
   text-overflow: ellipsis;
   display: block;
-  width: 100%;
+  flex: 1 1 auto;
   min-width: 0;
   max-width: 100%;
 }

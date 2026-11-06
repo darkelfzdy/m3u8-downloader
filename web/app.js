@@ -142,9 +142,19 @@
 
   function loadRecent() {
     try {
-      state.recent = JSON.parse(localStorage.getItem("m3u8_recent") || "[]");
+      const saved = JSON.parse(localStorage.getItem("m3u8_recent") || "[]");
+      state.recent = Array.isArray(saved) ? saved : [];
     } catch (e) {
       state.recent = [];
+    }
+    renderRecent();
+  }
+
+  function saveRecent() {
+    try {
+      localStorage.setItem("m3u8_recent", JSON.stringify(state.recent));
+    } catch (e) {
+      /* ignore */
     }
     renderRecent();
   }
@@ -153,8 +163,20 @@
     state.recent = [cmdline]
       .concat(state.recent.filter((x) => x !== cmdline))
       .slice(0, 10);
-    localStorage.setItem("m3u8_recent", JSON.stringify(state.recent));
-    renderRecent();
+    saveRecent();
+  }
+
+  function removeRecent(idx) {
+    if (!Number.isInteger(idx) || idx < 0 || idx >= state.recent.length) return;
+    state.recent.splice(idx, 1);
+    saveRecent();
+  }
+
+  function clearRecent() {
+    if (!state.recent.length) return;
+    if (!window.confirm("确定清除全部最近提交记录？")) return;
+    state.recent = [];
+    saveRecent();
   }
 
   function renderRecent() {
@@ -168,14 +190,19 @@
     wrap.classList.remove("hidden");
     box.innerHTML = state.recent
       .map(
-        (item) =>
-          '<button class="recent-item" data-recent="' +
-          escapeHtml(item) +
+        (item, idx) =>
+          '<div class="recent-row">' +
+          '<button class="recent-item" type="button" data-recent-idx="' +
+          idx +
           '" title="' +
           escapeHtml(item) +
           '">' +
           escapeHtml(item) +
-          "</button>"
+          "</button>" +
+          '<button class="recent-del" type="button" data-recent-del="' +
+          idx +
+          '" title="删除该记录" aria-label="删除该记录">✕</button>' +
+          "</div>"
       )
       .join("");
   }
@@ -794,11 +821,20 @@
     });
 
     $("#recent").addEventListener("click", function (e) {
-      const btn = e.target.closest("[data-recent]");
+      const del = e.target.closest("[data-recent-del]");
+      if (del) {
+        removeRecent(Number(del.getAttribute("data-recent-del")));
+        return;
+      }
+      const btn = e.target.closest("[data-recent-idx]");
       if (!btn) return;
-      $("#cmdline").value = btn.getAttribute("data-recent");
+      const item = state.recent[Number(btn.getAttribute("data-recent-idx"))];
+      if (item == null) return;
+      $("#cmdline").value = item;
       $("#cmdline").focus();
     });
+
+    $("#btn-recent-clear").addEventListener("click", clearRecent);
 
     $("#tasks").addEventListener("click", function (e) {
       const btn = e.target.closest("[data-action]");
