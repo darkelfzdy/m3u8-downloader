@@ -51,7 +51,27 @@ func (s *Server) Routes() http.Handler {
 	// 否则升级后可能仍加载缓存中的旧 app.js / style.css。
 	mux.Handle("/", noCache(http.FileServer(http.FS(sub))))
 
-	return logRequests(s.auth(mux))
+	return logRequests(cors(s.auth(mux)))
+}
+
+// cors 允许浏览器扩展 / 跨域网页直接调用远程 API（例如油猴脚本）。
+// 鉴权仍然可选：设置了 WEB_TOKEN 时，令牌可放在 Authorization 或 ?token=。
+func cors(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		isAPI := strings.HasPrefix(r.URL.Path, "/api/") || r.URL.Path == "/healthz"
+		if isAPI {
+			w.Header().Set("Access-Control-Allow-Origin", "*")
+			w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
+			w.Header().Set("Access-Control-Allow-Headers", "Authorization, Content-Type")
+			w.Header().Set("Access-Control-Max-Age", "86400")
+		}
+		// 预检请求在鉴权之前直接返回，否则带 Authorization 的跨域调用会被 401 拦掉。
+		if isAPI && r.Method == http.MethodOptions {
+			w.WriteHeader(http.StatusNoContent)
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
 }
 
 // noCache 要求浏览器每次使用资源前向服务端确认（可命中 304）。

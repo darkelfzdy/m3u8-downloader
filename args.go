@@ -103,6 +103,30 @@ func SplitArgs(line string) ([]string, error) {
 	return args, nil
 }
 
+// JoinArgs 把参数数组还原成可被 SplitArgs 再次解析的命令行字符串。
+// Web 任务会把 cmdline 持久化并在重试时重新解析，所以远程调用传数组时
+// 需要先转换成同样的命令行形式。
+func JoinArgs(args []string) string {
+	parts := make([]string, 0, len(args))
+	for _, a := range args {
+		if a != "" && !strings.ContainsAny(a, " \t\n\r\"'\\") {
+			parts = append(parts, a)
+			continue
+		}
+		var b strings.Builder
+		b.WriteByte('"')
+		for _, r := range a {
+			if r == '"' || r == '\\' {
+				b.WriteByte('\\')
+			}
+			b.WriteRune(r)
+		}
+		b.WriteByte('"')
+		parts = append(parts, b.String())
+	}
+	return strings.Join(parts, " ")
+}
+
 // ParseOptions 使用与 CLI 完全相同的 flag 定义解析参数。
 func ParseOptions(args []string, cfg AppConfig) (DownloadOptions, error) {
 	fs := flag.NewFlagSet("m3u8-downloader", flag.ContinueOnError)

@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         M3U8 资源终极嗅探器（自改版）
 // @namespace    local.m3u8-sniffer.custom
-// @version      1.0.3
-// @description  m3u8-downloader 专属解析适配，智能突破防爬限制，原生零损耗拉伸（默认不自动展开面板）
+// @version      1.0.4
+// @description  m3u8-downloader 专属解析适配，智能突破防爬限制，支持一键远程提交下载任务（内网/外网）
 // @author       Orochi-Adde
 // @match        *://*/*
 // @grant        GM_setClipboard
@@ -71,16 +71,179 @@
     let savedProxyEnable = false;
     let savedProxyUrl = 'socks5://127.0.0.1:10808';
     let savedThreads = '';
+    let savedServerUrl = 'http://192.168.31.76:58003';
+    let savedServerToken = '';
     try {
         if (typeof GM_getValue !== 'undefined') {
             savedProxyEnable = GM_getValue('gemini_proxy_enable', false);
             savedProxyUrl = GM_getValue('gemini_proxy_url', 'socks5://127.0.0.1:10808');
             savedThreads = String(GM_getValue('gemini_threads', '') || '').replace(/[^0-9]/g, '').slice(0, 3);
+            savedServerUrl = GM_getValue('gemini_server_url', 'http://192.168.31.76:58003');
+            savedServerToken = GM_getValue('gemini_server_token', '');
         }
     } catch (e) {}
 
     function safeSaveConfig(key, value) {
         try { if (typeof GM_setValue !== 'undefined') GM_setValue(key, value); } catch (e) {}
+    }
+
+    function escapeAttr(v) {
+        return String(v == null ? '' : v)
+            .replace(/&/g, '&amp;').replace(/"/g, '&quot;')
+            .replace(/</g, '&lt;').replace(/>/g, '&gt;');
+    }
+
+    // 统一成 scheme://host[:port]，去掉末尾斜杠，方便拼接 /api/xxx。
+    function normalizeServerUrl(raw) {
+        let v = String(raw == null ? '' : raw).trim().replace(/\/+$/, '');
+        if (!v) return '';
+        if (!/^https?:\/\//i.test(v)) v = 'http://' + v;
+        return v;
+    }
+
+    function getServerUrl() {
+        const el = document.getElementById('gemini-server-url');
+        return normalizeServerUrl(el ? el.value : savedServerUrl);
+    }
+
+    function getServerToken() {
+        const el = document.getElementById('gemini-server-token');
+        return (el ? el.value : savedServerToken).trim();
+    }
+
+    // GM_xmlhttpRequest 不受 CORS 限制；未授权时回退到 fetch（后端已开放 CORS）。
+    function remoteRequest(options) {
+        return new Promise((resolve, reject) => {
+            if (typeof GM_xmlhttpRequest === 'function') {
+                GM_xmlhttpRequest({
+                    method: options.method || 'GET',
+                    url: options.url,
+                    headers: options.headers || {},
+                    data: options.data,
+                    timeout: options.timeout || 20000,
+                    onload: resolve,
+                    onerror: () => reject(new Error('无法连接后端，请检查地址 / 网络')),
+                    ontimeout: () => reject(new Error('请求超时，请检查后端地址 / 网络'))
+                });
+            } else {
+                fetch(options.url, {
+                    method: options.method || 'GET',
+                    headers: options.headers || {},
+                    body: options.data
+                }).then(async (resp) => {
+                    resolve({ status: resp.status, responseText: await resp.text() });
+                }).catch(reject);
+            }
+        });
+    }
+
+    function parseRemoteError(res) {
+        let msg = '';
+        try {
+            const data = JSON.parse(res.responseText || '{}');
+            msg = data.error || data.message || '';
+        } catch (e) {}
+        if (!msg) msg = (res.responseText || '').trim().slice(0, 200) || ('HTTP ' + res.status);
+        if (res.status === 401) msg = '访问令牌无效（请检查 Token）';
+        return msg;
+    }
+
+    // 把当前行的参数发送到远程 m3u8-downloader 后端。
+    async function sendTaskToServer(cmdline, btn) {
+        const base = getServerUrl();
+        if (!base) {
+            alert('请先在【参数构造器】里填写远程后端地址');
+            return;
+        }
+
+        const token = getServerToken();
+        const url = base + '/api/tasks' + (token ? '?token=' + encodeURIComponent(token) : '');
+        const headers = { 'Content-Type': 'application/json' };
+        if (token) headers['Authorization'] = 'Bearer ' + token;
+
+        const oldText = btn.innerText;
+        const oldBg = btn.style.background;
+        btn.disabled = true;
+        btn.innerText = '⏳ 发送中';
+        btn.style.background = '#34495e';
+
+        try {
+            const res = await remoteRequest({
+                method: 'POST', url: url, headers: headers,
+                data: JSON.stringify({ cmdline: cmdline })
+            });
+
+            if (res.status >= 200 && res.status < 300) {
+                let task = {};
+                try { task = JSON.parse(res.responseText || '{}'); } catch (e) {}
+                btn.innerText = '✔ 已发送';
+                btn.style.background = COLORS.safe;
+                btn.title = `任务已创建：${task.name || ''}${task.id ? ' (' + task.id + ')' : ''}`;
+            } else {
+                throw new Error(parseRemoteError(res));
+            }
+        } catch (e) {
+            btn.innerText = '❌ 发送失败';
+            btn.style.background = COLORS.ad;
+            btn.title = e && e.message ? e.message : String(e);
+            console.warn('[M3U8 Sniffer] 远程发送失败:', e);
+        } finally {
+            btn.disabled = false;
+            setTimeout(() => {
+                btn.innerText = oldText;
+                btn.style.background = oldBg;
+            }, 2500);
+        }
+    }
+
+    function quoteArg(v) {
+        return '"' + String(v == null ? '' : v).replace(/\\/g, '\\\\').replace(/"/g, '\\"') + '"';
+    }
+
+    async function testServerConnection(btn) {
+        const hint = document.getElementById('gemini-server-hint');
+        const base = getServerUrl();
+        if (!base) {
+            if (hint) {
+                hint.textContent = '请填写后端地址';
+                hint.style.color = COLORS.ad;
+                hint.style.display = 'inline-block';
+            }
+            return;
+        }
+
+        const token = getServerToken();
+        const url = base + '/api/info' + (token ? '?token=' + encodeURIComponent(token) : '');
+        const headers = token ? { 'Authorization': 'Bearer ' + token } : {};
+        const oldText = btn.innerText;
+        btn.disabled = true;
+        btn.innerText = '测试中';
+
+        try {
+            const res = await remoteRequest({ method: 'GET', url: url, headers: headers, timeout: 10000 });
+            if (res.status >= 200 && res.status < 300) {
+                let data = {};
+                try { data = JSON.parse(res.responseText || '{}'); } catch (e) {}
+                if (hint) {
+                    hint.textContent = '✔ 连接成功' + (data.version ? ' (v' + data.version + ')' : '');
+                    hint.style.color = COLORS.safe;
+                }
+            } else {
+                throw new Error(parseRemoteError(res));
+            }
+        } catch (e) {
+            if (hint) {
+                hint.textContent = '✖ ' + (e && e.message ? e.message : String(e));
+                hint.style.color = COLORS.ad;
+            }
+        } finally {
+            if (hint) {
+                hint.style.display = 'inline-block';
+                setTimeout(() => { hint.style.display = 'none'; }, 4000);
+            }
+            btn.disabled = false;
+            btn.innerText = oldText;
+        }
     }
 
     function getAutoFilename() {
@@ -313,6 +476,20 @@
                 <span id="gemini-threads-hint" style="color: #2ecc71; font-size: 10px; display: none;">✔ 已保存</span>
             </div>
 
+            <div style="display:flex; align-items:center; gap: 8px; margin-top: 8px; border-top: 1px dashed #555; padding-top: 8px;">
+                <label style="color:#e67e22; font-weight:bold; white-space:nowrap;" title="点击行内『发送』按钮，会把命令行参数直接提交到该后端">远程后端</label>
+                <input type="text" id="gemini-server-url" value="${escapeAttr(savedServerUrl)}" placeholder="http://192.168.31.76:58003" title="m3u8-downloader Web 服务地址" style="background:#111; border:1px solid #555; color:#fff; padding:3px 6px; border-radius:3px; font-family:Consolas; flex:1; min-width:150px; outline:none;">
+                <button type="button" class="gemini-preset" data-url="http://192.168.31.76:58003" title="填入内网地址" style="background:#2980b9; color:#fff; border:none; padding:3px 7px; border-radius:3px; cursor:pointer; font-size:11px;">内网</button>
+                <button type="button" class="gemini-preset" data-url="https://m3u8.zdyhh.top" title="填入外网地址" style="background:#16a085; color:#fff; border:none; padding:3px 7px; border-radius:3px; cursor:pointer; font-size:11px;">外网</button>
+                <button type="button" id="gemini-server-test" style="background:#8e44ad; color:#fff; border:none; padding:3px 7px; border-radius:3px; cursor:pointer; font-size:11px;">测试</button>
+            </div>
+
+            <div style="display:flex; align-items:center; gap: 8px; margin-top: 6px;">
+                <label style="color:#bdc3c7; white-space:nowrap;" title="后端设置了 WEB_TOKEN 时填写">Token</label>
+                <input type="password" id="gemini-server-token" value="${escapeAttr(savedServerToken)}" placeholder="留空 = 后端未启用鉴权" title="与后端 WEB_TOKEN 一致；也支持在地址里直接带 ?token=" style="background:#111; border:1px solid #555; color:#fff; padding:3px 6px; border-radius:3px; font-family:Consolas; flex:1; min-width:150px; outline:none;">
+                <span id="gemini-server-hint" style="color: #2ecc71; font-size: 10px; display: none;"></span>
+            </div>
+
             <div style="margin-top: 5px; border-top: 1px dashed #555; padding-top: 8px;">
                 <label style="cursor:pointer; color:#e67e22;"><input type="checkbox" id="gemini-force-parse"> 强制显示所有底层链接的"探测"按钮</label>
             </div>
@@ -331,7 +508,22 @@
             }
         });
 
+        advancedPanel.addEventListener('click', (e) => {
+            const preset = e.target.closest && e.target.closest('.gemini-preset');
+            if (preset) {
+                const input = document.getElementById('gemini-server-url');
+                input.value = preset.dataset.url;
+                safeSaveConfig('gemini_server_url', preset.dataset.url);
+                showSaveHint('gemini-server-hint');
+                return;
+            }
+            if (e.target.id === 'gemini-server-test') {
+                testServerConnection(e.target);
+            }
+        });
+
         let typeTimer;
+        let serverTimer;
         advancedPanel.addEventListener('input', (e) => {
             if (e.target.id === 'gemini-proxy-url') {
                 clearTimeout(typeTimer);
@@ -348,11 +540,28 @@
                     showSaveHint('gemini-threads-hint');
                 }, 500);
             }
+            if (e.target.id === 'gemini-server-url') {
+                clearTimeout(serverTimer);
+                serverTimer = setTimeout(() => {
+                    const v = normalizeServerUrl(e.target.value);
+                    safeSaveConfig('gemini_server_url', v);
+                    showSaveHint('gemini-server-hint');
+                }, 500);
+            }
+            if (e.target.id === 'gemini-server-token') {
+                clearTimeout(serverTimer);
+                serverTimer = setTimeout(() => {
+                    safeSaveConfig('gemini_server_token', e.target.value.trim());
+                    showSaveHint('gemini-server-hint');
+                }, 500);
+            }
         });
 
-        function showSaveHint(hintId = 'gemini-proxy-save-hint') {
+        function showSaveHint(hintId = 'gemini-proxy-save-hint', text = '✔ 已保存') {
             const hint = document.getElementById(hintId);
             if (hint) {
+                if (text) hint.textContent = text;
+                hint.style.color = COLORS.safe;
                 hint.style.display = 'inline-block';
                 setTimeout(() => { hint.style.display = 'none'; }, 1500);
             }
@@ -450,9 +659,10 @@
         copyBtn.innerText = '复制参数';
         copyBtn.style.cssText = `background: ${COLORS.main}; color: white; border: none; padding: 4px 6px; border-radius: 4px; cursor: pointer; font-size: 11px; font-weight: bold; transition: background 0.2s; display: block; margin-bottom: 4px; width: 100%;`;
 
-        copyBtn.onclick = () => {
+        // 复制与远程发送共用同一套命令行参数，保证行为一致。
+        function buildCmdline() {
             const outName = isChild ? `${getAutoFilename()}_${res}` : getAutoFilename();
-            let cmdStr = ` -u "${url}"`;
+            let cmdStr = `-u ${quoteArg(url)}`;
 
             // 并发数：留空不传 -n，让后端使用配置文件/Web 面板里的 default_threads
             const threadsInput = document.getElementById('gemini-threads');
@@ -461,22 +671,31 @@
                 cmdStr += ` -n ${Math.min(threadsVal, 256)}`;
             }
 
-            if (document.getElementById('chk-ref').checked) { cmdStr += ` -H "Referer: ${window.location.href}"`; }
-            if (document.getElementById('chk-cookie').checked && document.cookie) { cmdStr += ` -c "${document.cookie}"`; }
-            if (document.getElementById('chk-ua').checked) { cmdStr += ` -H "User-Agent: ${navigator.userAgent}"`; }
+            if (document.getElementById('chk-ref').checked) { cmdStr += ` -H ${quoteArg('Referer: ' + window.location.href)}`; }
+            if (document.getElementById('chk-cookie').checked && document.cookie) { cmdStr += ` -c ${quoteArg(document.cookie)}`; }
+            if (document.getElementById('chk-ua').checked) { cmdStr += ` -H ${quoteArg('User-Agent: ' + navigator.userAgent)}`; }
 
             if (document.getElementById('chk-proxy').checked) {
                 const proxyUrl = document.getElementById('gemini-proxy-url').value.trim();
-                if (proxyUrl) { cmdStr += ` -p "${proxyUrl}"`; }
+                if (proxyUrl) { cmdStr += ` -p ${quoteArg(proxyUrl)}`; }
             }
 
-            cmdStr += ` -o "${outName}"`;
+            cmdStr += ` -o ${quoteArg(outName)}`;
+            return cmdStr;
+        }
 
-            GM_setClipboard(cmdStr);
+        copyBtn.onclick = () => {
+            GM_setClipboard(buildCmdline());
             const originTxt = copyBtn.innerText;
             copyBtn.innerText = '✔ 已复制'; copyBtn.style.background = '#e67e22';
             setTimeout(() => { copyBtn.innerText = originTxt; copyBtn.style.background = COLORS.main; }, 1500);
         };
+
+        const sendBtn = document.createElement('button');
+        sendBtn.innerText = '🚀 发送';
+        sendBtn.title = '把当前参数直接提交到远程 m3u8-downloader 后端';
+        sendBtn.style.cssText = `background: #2980b9; color: white; border: none; padding: 4px 6px; border-radius: 4px; cursor: pointer; font-size: 11px; font-weight: bold; transition: background 0.2s; display: block; margin-bottom: 4px; width: 100%;`;
+        sendBtn.onclick = () => sendTaskToServer(buildCmdline(), sendBtn);
 
         const parseBtn = document.createElement('button');
         parseBtn.innerText = '🔍 探测解析';
@@ -490,6 +709,7 @@
         parseBtn.onclick = () => smartParseM3u8(url, tr, parseBtn, tdFile);
 
         tdAction.appendChild(copyBtn);
+        tdAction.appendChild(sendBtn);
         tdAction.appendChild(parseBtn);
 
         tr.appendChild(tdSource);

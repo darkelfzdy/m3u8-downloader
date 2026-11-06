@@ -78,6 +78,26 @@ func TestSplitArgs(t *testing.T) {
 	}
 }
 
+func TestJoinArgsRoundTrip(t *testing.T) {
+	cases := [][]string{
+		{"-u", "https://example.com/a.m3u8", "-o", "name"},
+		{"-u", "https://example.com/a b.m3u8", "-H", "Referer: https://a.com/x y"},
+		{"-o", "远程 测试", "-c", "session=1; uid=2"},
+		{"-H", `X-A: a"b`, "-p", `socks5://127.0.0.1:10808`},
+		{"-o", ""},
+	}
+	for _, want := range cases {
+		line := JoinArgs(want)
+		got, err := SplitArgs(line)
+		if err != nil {
+			t.Fatalf("JoinArgs(%#v) = %q 解析失败: %v", want, line, err)
+		}
+		if !reflect.DeepEqual(got, want) {
+			t.Fatalf("往返结果不匹配\n参数: %#v\n命令行: %q\n实际: %#v", want, line, got)
+		}
+	}
+}
+
 func TestParseOptions(t *testing.T) {
 	cfg := DefaultConfig()
 

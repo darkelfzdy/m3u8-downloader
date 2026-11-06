@@ -49,18 +49,30 @@ func (s *Server) handleTasks(w http.ResponseWriter, r *http.Request) {
 	case http.MethodGet:
 		writeJSON(w, http.StatusOK, map[string]any{"tasks": s.manager.List()})
 	case http.MethodPost:
-		var req struct {
-			Cmdline string `json:"cmdline"`
+		// 支持三种远程传参方式，便于脚本 / curl / 其他客户端直接调用：
+		//   1. JSON: {"cmdline": "-u \"https://...\" -o name"}
+		//   2. JSON: {"args": ["-u", "https://...", "-o", "name"]}
+		//   3. 无请求体: POST /api/tasks?cmdline=-u%20...
+		cmdline := strings.TrimSpace(r.URL.Query().Get("cmdline"))
+		if cmdline == "" {
+			var req struct {
+				Cmdline string   `json:"cmdline"`
+				Args    []string `json:"args"`
+			}
+			if err := readJSON(r, &req); err != nil {
+				writeError(w, http.StatusBadRequest, "请求体格式错误")
+				return
+			}
+			cmdline = strings.TrimSpace(req.Cmdline)
+			if cmdline == "" && len(req.Args) > 0 {
+				cmdline = JoinArgs(req.Args)
+			}
 		}
-		if err := readJSON(r, &req); err != nil {
-			writeError(w, http.StatusBadRequest, "请求体格式错误")
-			return
-		}
-		if strings.TrimSpace(req.Cmdline) == "" {
+		if cmdline == "" {
 			writeError(w, http.StatusBadRequest, "请输入下载参数")
 			return
 		}
-		task, err := s.manager.CreateTask(req.Cmdline)
+		task, err := s.manager.CreateTask(cmdline)
 		if err != nil {
 			writeError(w, http.StatusBadRequest, err.Error())
 			return

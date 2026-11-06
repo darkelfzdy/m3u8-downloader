@@ -248,7 +248,7 @@ m3u8-downloader -u "https://example.com/video.m3u8" -o "老视频" -f
 
 | 方法 | 路径 | 说明 |
 | --- | --- | --- |
-| `POST` | `/api/tasks` | 创建任务，body 为 `{"cmdline": "-u \"https://...\" -o name -n 32 -s"}` |
+| `POST` | `/api/tasks` | 创建任务，body 支持 `cmdline` 字符串或 `args` 数组，也支持 `?cmdline=` |
 | `GET` | `/api/tasks` | 任务列表 |
 | `GET` | `/api/tasks/{id}` | 任务详情 |
 | `GET` | `/api/tasks/{id}/events` | SSE 进度流 |
@@ -268,6 +268,27 @@ SSE 事件格式：
 event: progress
 data: {"id":"t_xxx","status":"running","total":1200,"completed":340,"speed":8.42,"bytes":123456789}
 ```
+
+### 远程调用（油猴脚本 / 跨域）
+
+`/api/*` 已开放 CORS，可直接从任意网页或浏览器扩展远程提交命令行参数，支持三种写法：
+
+```bash
+# 1. JSON 命令行字符串
+curl -X POST 'http://192.168.31.76:58003/api/tasks' \
+  -H 'Content-Type: application/json' \
+  -d '{"cmdline":"-u \"https://example.com/index.m3u8\" -o demo -n 32"}'
+
+# 2. JSON 参数数组（避免手工转义）
+curl -X POST 'http://192.168.31.76:58003/api/tasks' \
+  -H 'Content-Type: application/json' \
+  -d '{"args":["-u","https://example.com/index.m3u8","-o","demo","-n","32"]}'
+
+# 3. 直接把参数放在查询串里（无需请求体）
+curl -X POST 'http://192.168.31.76:58003/api/tasks?cmdline=-u%20https%3A%2F%2Fexample.com%2Findex.m3u8'
+```
+
+设置了 `WEB_TOKEN` 时，令牌可放 `Authorization: Bearer <token>`，也可用 `?token=<token>`（方便 SSE 和简单客户端）。仓库自带的 `m3u8-sniffer.user.js` 已内置「远程后端」地址（内网 / 外网预设）、Token 和行内「🚀 发送」按钮。
 
 ---
 
