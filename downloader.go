@@ -270,11 +270,13 @@ func (d *Downloader) GetM3u8Key(ctx context.Context, baseURL *url.URL, body stri
 
 // DownloadAll 任务分发器：利用 Goroutine 池实现多线程并发下载。
 // 单轮失败的碎片会被收集起来在后续轮次重试，避免个别慢速碎片拖垮整个任务。
+// 最多重试 maxRounds 轮；之后仍失败的碎片会被计入返回值，由调用方决定是否跳过并继续合并。
+// 只有 ctx 被取消时才返回 error。
 // onProgress 每秒至少回调一次，用于 CLI 打印或 Web SSE 推送。
-func (d *Downloader) DownloadAll(ctx context.Context, tsList []TsInfo, savePath string, key string, onProgress func(DownloadProgress)) error {
+func (d *Downloader) DownloadAll(ctx context.Context, tsList []TsInfo, savePath string, key string, onProgress func(DownloadProgress)) (int, error) {
 	total := len(tsList)
 	if total == 0 {
-		return fmt.Errorf("未解析到视频碎片")
+		return 0, fmt.Errorf("未解析到视频碎片")
 	}
 
 	var completed int32
@@ -318,7 +320,6 @@ func (d *Downloader) DownloadAll(ctx context.Context, tsList []TsInfo, savePath 
 	const maxRounds = 3
 	// 最后一轮把并发压到 4，避免失败碎片继续满并发互抢带宽。
 	const lastRoundThreads = 4
-	var lastErr error
 	for round := 1; round <= maxRounds && len(pending) > 0; round++ {
 		threads := d.opts.Threads
 		if round == maxRounds && threads > lastRoundThreads {
@@ -335,7 +336,7 @@ func (d *Downloader) DownloadAll(ctx context.Context, tsList []TsInfo, savePath 
 			pending = nil
 			break
 		}
-		lastErr = fmt.Errorf("%d 个碎片下载失败", len(failed))
+		log.Printf("第 %d 轮结束：仍有 %d 个碎片下载失败", round, len(failed))
 		pending = failed
 	}
 
@@ -343,12 +344,12 @@ func (d *Downloader) DownloadAll(ctx context.Context, tsList []TsInfo, savePath 
 	<-progressDone
 
 	if ctx.Err() != nil {
-		return ctx.Err()
+		return len(pending), ctx.Err()
 	}
 	if len(pending) > 0 {
-		return fmt.Errorf("部分碎片下载失败（重试 %d 轮后仍失败 %d 个）: %v", maxRounds, len(pending), lastErr)
+		log.Printf("⚠️ 重试 %d 轮后仍有 %d 个碎片下载失败，将跳过这些碎片继续合并", maxRounds, len(pending))
 	}
-	return nil
+	return len(pending), nil
 }
 
 // downloadBatch 用固定大小的 worker 池下载一批碎片，返回其中仍失败的碎片。
@@ -478,34 +479,48 @@ func (d *Downloader) downloadTs(ctx context.Context, ts TsInfo, savePath string,
 }
 
 // MergeTs 将临时碎片按顺序流式合并为最终文件，内存占用恒定。
-func MergeTs(tsList []TsInfo, tempDir, finalPath string) error {
+// 缺失的碎片会被跳过并计入返回值，保证部分碎片下载失败时仍能产出可播放的视频。
+func MergeTs(tsList []TsInfo, tempDir, finalPath string) (int, error) {
 	out, err := os.Create(finalPath)
 	if err != nil {
-		return err
+		return 0, err
 	}
 
+	merged := 0
+	skipped := 0
 	buf := make([]byte, 32*1024)
 	for _, ts := range tsList {
 		f, err := os.Open(filepath.Join(tempDir, ts.Name))
 		if err != nil {
+			if os.IsNotExist(err) {
+				skipped++
+				continue
+			}
 			out.Close()
 			os.Remove(finalPath)
-			return fmt.Errorf("缺少碎片 %s: %w", ts.Name, err)
+			return skipped, fmt.Errorf("打开碎片 %s: %w", ts.Name, err)
 		}
 		_, copyErr := io.CopyBuffer(out, f, buf)
 		f.Close()
 		if copyErr != nil {
 			out.Close()
 			os.Remove(finalPath)
-			return copyErr
+			return skipped, copyErr
 		}
+		merged++
+	}
+
+	if merged == 0 {
+		out.Close()
+		os.Remove(finalPath)
+		return skipped, fmt.Errorf("没有可合并的碎片，全部下载失败")
 	}
 
 	if err := out.Sync(); err != nil {
 		out.Close()
-		return err
+		return skipped, err
 	}
-	return out.Close()
+	return skipped, out.Close()
 }
 
 func sleepCtx(ctx context.Context, d time.Duration) error {

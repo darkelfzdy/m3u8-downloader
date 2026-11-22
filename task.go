@@ -567,7 +567,8 @@ func (m *Manager) runTask(t *Task) {
 		}
 	}
 
-	if err := d.DownloadAll(ctx, tsList, tempDir, key, t.updateProgress); err != nil {
+	failedFrags, err := d.DownloadAll(ctx, tsList, tempDir, key, t.updateProgress)
+	if err != nil {
 		if ctx.Err() != nil {
 			t.setStatus(StatusCancelled, "任务已取消")
 			if !view.Options.KeepTs {
@@ -579,13 +580,20 @@ func (m *Manager) runTask(t *Task) {
 		m.failTask(t, ctx, err)
 		return
 	}
+	if failedFrags > 0 {
+		log.Printf("任务 %s: %d 个碎片下载失败，跳过并继续合并", t.ID, failedFrags)
+	}
 
 	t.setStatus(StatusMerging, "")
 	m.save()
 
-	if err := MergeTs(tsList, tempDir, finalPath); err != nil {
+	skipped, err := MergeTs(tsList, tempDir, finalPath)
+	if err != nil {
 		m.failTask(t, ctx, fmt.Errorf("合并失败: %w", err))
 		return
+	}
+	if skipped > 0 {
+		log.Printf("任务 %s: 合并时跳过 %d 个缺失碎片（视频可能不完整）", t.ID, skipped)
 	}
 
 	if !view.Options.KeepTs {
@@ -597,7 +605,14 @@ func (m *Manager) runTask(t *Task) {
 		Completed: int32(len(tsList)),
 		Bytes:     t.snapshot().Bytes,
 	})
-	t.setStatus(StatusCompleted, "")
+	warnMsg := ""
+	if n := failedFrags; n > 0 {
+		if skipped > n {
+			n = skipped
+		}
+		warnMsg = fmt.Sprintf("⚠️ %d 个碎片下载失败并被跳过，视频可能存在花屏或卡顿", n)
+	}
+	t.setStatus(StatusCompleted, warnMsg)
 	m.save()
 }
 

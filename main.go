@@ -125,7 +125,8 @@ func runCLI() {
 	}
 	fmt.Println("--------------------------------------------------")
 
-	if err := d.DownloadAll(ctx, tsList, tempTsDir, tsKey, cliProgress); err != nil {
+	failedFrags, err := d.DownloadAll(ctx, tsList, tempTsDir, tsKey, cliProgress)
+	if err != nil {
 		fmt.Println()
 		if errors.Is(err, context.Canceled) {
 			fmt.Println("\n\n⚠️ 检测到终止信号 (Ctrl+C)，已保存当前断点进度，程序退出。下次启动将自动续传。")
@@ -133,11 +134,18 @@ func runCLI() {
 		}
 		log.Fatalf("❌ 下载失败: %v", err)
 	}
+	if failedFrags > 0 {
+		fmt.Printf("\n⚠️ 有 %d 个碎片重试后仍下载失败，将跳过并继续合并（视频可能不完整）\n", failedFrags)
+	}
 	fmt.Println()
 
 	fmt.Println("\n\n🔧 下载完毕，正在进行流式无损合并...")
-	if err := MergeTs(tsList, tempTsDir, finalMoviePath); err != nil {
+	skipped, err := MergeTs(tsList, tempTsDir, finalMoviePath)
+	if err != nil {
 		log.Fatalf("❌ 合并失败: %v", err)
+	}
+	if skipped > 0 {
+		fmt.Printf("⚠️ 合并时跳过 %d 个缺失碎片（视频可能存在花屏或卡顿）\n", skipped)
 	}
 
 	if !opts.KeepTs {
